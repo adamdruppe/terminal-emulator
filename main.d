@@ -110,7 +110,6 @@ void main(string[] args) {
 		return;
 	}
 
-	startChild!startup("plink.exe", "plink.exe me@arsdnet.net -i c:\\users\\me\\documents\\key.ppk /home/me/program/terminal-emulator/serverside");
 	import std.string;
 	startChild!startup(null, args[2..$].join(" "));
 }
