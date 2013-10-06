@@ -66,6 +66,20 @@ class TerminalEmulator {
 				if(shift && alt && !ctrl) modifierNumber = "4";
 				if(alt && !shift && !ctrl) modifierNumber = "3";
 				if(shift && !alt && !ctrl) modifierNumber = "2";
+				// FIXME: meta and windows
+				// windows is an extension
+				if(windows) {
+					if(modifierNumber.length)
+						modifierNumber = "2" ~ modifierNumber;
+					else
+						modifierNumber = "20";
+					/* // the below is what we're really doing
+					int mn = 0;
+					if(modifierNumber.length)
+						mn = modifierNumber[0] + '0';
+					mn += 20;
+					*/
+				}
 
 				string keyNumber;
 				char terminator;
@@ -142,6 +156,8 @@ class TerminalEmulator {
 		ta.background = Color.white;
 		return ta;
 	}
+
+	Color[256] palette;
 
 	/// .
 	struct TextAttributes {
@@ -395,6 +411,8 @@ class TerminalEmulator {
 		// initialization
 		currentAttributes = defaultTextAttributes();
 		cursorColor = Color.white;
+
+		palette = xtermPalette();
 
 		resizeTerminal(width, height);
 
@@ -927,7 +945,7 @@ class TerminalEmulator {
 							cursorStyle = CursorStyle.bar;
 					break;
 					case 'm':
-						foreach(arg; getArgs(0))
+						argsLoop: foreach(argIdx, arg; getArgs(0))
 						switch(arg) {
 							case 0:
 							// normal
@@ -967,15 +985,28 @@ class TerminalEmulator {
 							..
 							case 37:
 							// set foreground color
+								/*
 								Color nc;
 								ubyte multiplier = currentAttributes.bold ? 255 : 127;
 								nc.r = cast(ubyte)((arg - 30) & 1) * multiplier;
 								nc.g = cast(ubyte)(((arg - 30) & 2)>>1) * multiplier;
 								nc.b = cast(ubyte)(((arg - 30) & 4)>>2) * multiplier;
 								nc.a = 255;
+								*/
 								currentAttributes.foregroundIndex = cast(ubyte)(arg - 30);
-								currentAttributes.foreground = nc;
+								currentAttributes.foreground = palette[arg-30 + (currentAttributes.bold ? 8 : 0)];
 							break;
+							case 38:
+								// xterm 256 color set foreground color
+								auto args = getArgs()[argIdx + 1 .. $];
+								if(args[0] == 2) {
+									// set color to closest match in palette. but since we have full support, we'll just take it directly
+									currentAttributes.foreground = Color(args[1], args[2], args[3]);
+								} else if(args[0] == 5) {
+									// set to palette index
+									currentAttributes.foreground = palette[args[1]];
+								}
+								break argsLoop;
 							case 39:
 							// default foreground color
 								auto dflt = defaultTextAttributes();
@@ -987,15 +1018,29 @@ class TerminalEmulator {
 							..
 							case 47:
 							// set background color
+								/*
 								Color nc;
 								nc.r = cast(ubyte)((arg - 40) & 1) * 255;
 								nc.g = cast(ubyte)(((arg - 40) & 2)>>1) * 255;
 								nc.b = cast(ubyte)(((arg - 40) & 4)>>2) * 255;
 								nc.a = 255;
+								*/
 
 								currentAttributes.backgroundIndex = cast(ubyte)(arg - 40);
-								currentAttributes.background = nc;
+								//currentAttributes.background = nc;
+								currentAttributes.background = palette[arg-40];
 							break;
+							case 48:
+								// xterm 256 color set background color
+								auto args = getArgs()[argIdx + 1 .. $];
+								if(args[0] == 2) {
+									// set color to closest match in palette. but since we have full support, we'll just take it directly
+									currentAttributes.background = Color(args[1], args[2], args[3]);
+								} else if(args[0] == 5) {
+									// set to palette index
+									currentAttributes.background = palette[args[1]];
+								}
+								break argsLoop;
 							case 49:
 							// default background color
 								auto dflt = defaultTextAttributes();
@@ -1615,4 +1660,267 @@ mixin template PtySupport(alias resizeHelper) {
 			redraw();
 		}
 	}
+}
+
+
+// workaround dmd bug fixed in next release
+// static immutable Color[256] xtermPalette = [
+Color[] xtermPalette() { return [
+	Color(0, 0, 0),
+	Color(0xcd, 0, 0),
+	Color(0, 0xcd, 0),
+	Color(0xcd, 0xcd, 0),
+	Color(0, 0, 0xee),
+	Color(0xcd, 0, 0xcd),
+	Color(0, 0xcd, 0xcd),
+	Color(229, 229, 229),
+	Color(127, 127, 127),
+	Color(255, 0, 0),
+	Color(0, 255, 0),
+	Color(255, 255, 0),
+	Color(92, 92, 255),
+	Color(255, 0, 255),
+	Color(0, 255, 255),
+	Color(255, 255, 255),
+	Color(0, 0, 0),
+	Color(0, 0, 95),
+	Color(0, 0, 135),
+	Color(0, 0, 175),
+	Color(0, 0, 215),
+	Color(0, 0, 255),
+	Color(0, 95, 0),
+	Color(0, 95, 95),
+	Color(0, 95, 135),
+	Color(0, 95, 175),
+	Color(0, 95, 215),
+	Color(0, 95, 255),
+	Color(0, 135, 0),
+	Color(0, 135, 95),
+	Color(0, 135, 135),
+	Color(0, 135, 175),
+	Color(0, 135, 215),
+	Color(0, 135, 255),
+	Color(0, 175, 0),
+	Color(0, 175, 95),
+	Color(0, 175, 135),
+	Color(0, 175, 175),
+	Color(0, 175, 215),
+	Color(0, 175, 255),
+	Color(0, 215, 0),
+	Color(0, 215, 95),
+	Color(0, 215, 135),
+	Color(0, 215, 175),
+	Color(0, 215, 215),
+	Color(0, 215, 255),
+	Color(0, 255, 0),
+	Color(0, 255, 95),
+	Color(0, 255, 135),
+	Color(0, 255, 175),
+	Color(0, 255, 215),
+	Color(0, 255, 255),
+	Color(95, 0, 0),
+	Color(95, 0, 95),
+	Color(95, 0, 135),
+	Color(95, 0, 175),
+	Color(95, 0, 215),
+	Color(95, 0, 255),
+	Color(95, 95, 0),
+	Color(95, 95, 95),
+	Color(95, 95, 135),
+	Color(95, 95, 175),
+	Color(95, 95, 215),
+	Color(95, 95, 255),
+	Color(95, 135, 0),
+	Color(95, 135, 95),
+	Color(95, 135, 135),
+	Color(95, 135, 175),
+	Color(95, 135, 215),
+	Color(95, 135, 255),
+	Color(95, 175, 0),
+	Color(95, 175, 95),
+	Color(95, 175, 135),
+	Color(95, 175, 175),
+	Color(95, 175, 215),
+	Color(95, 175, 255),
+	Color(95, 215, 0),
+	Color(95, 215, 95),
+	Color(95, 215, 135),
+	Color(95, 215, 175),
+	Color(95, 215, 215),
+	Color(95, 215, 255),
+	Color(95, 255, 0),
+	Color(95, 255, 95),
+	Color(95, 255, 135),
+	Color(95, 255, 175),
+	Color(95, 255, 215),
+	Color(95, 255, 255),
+	Color(135, 0, 0),
+	Color(135, 0, 95),
+	Color(135, 0, 135),
+	Color(135, 0, 175),
+	Color(135, 0, 215),
+	Color(135, 0, 255),
+	Color(135, 95, 0),
+	Color(135, 95, 95),
+	Color(135, 95, 135),
+	Color(135, 95, 175),
+	Color(135, 95, 215),
+	Color(135, 95, 255),
+	Color(135, 135, 0),
+	Color(135, 135, 95),
+	Color(135, 135, 135),
+	Color(135, 135, 175),
+	Color(135, 135, 215),
+	Color(135, 135, 255),
+	Color(135, 175, 0),
+	Color(135, 175, 95),
+	Color(135, 175, 135),
+	Color(135, 175, 175),
+	Color(135, 175, 215),
+	Color(135, 175, 255),
+	Color(135, 215, 0),
+	Color(135, 215, 95),
+	Color(135, 215, 135),
+	Color(135, 215, 175),
+	Color(135, 215, 215),
+	Color(135, 215, 255),
+	Color(135, 255, 0),
+	Color(135, 255, 95),
+	Color(135, 255, 135),
+	Color(135, 255, 175),
+	Color(135, 255, 215),
+	Color(135, 255, 255),
+	Color(175, 0, 0),
+	Color(175, 0, 95),
+	Color(175, 0, 135),
+	Color(175, 0, 175),
+	Color(175, 0, 215),
+	Color(175, 0, 255),
+	Color(175, 95, 0),
+	Color(175, 95, 95),
+	Color(175, 95, 135),
+	Color(175, 95, 175),
+	Color(175, 95, 215),
+	Color(175, 95, 255),
+	Color(175, 135, 0),
+	Color(175, 135, 95),
+	Color(175, 135, 135),
+	Color(175, 135, 175),
+	Color(175, 135, 215),
+	Color(175, 135, 255),
+	Color(175, 175, 0),
+	Color(175, 175, 95),
+	Color(175, 175, 135),
+	Color(175, 175, 175),
+	Color(175, 175, 215),
+	Color(175, 175, 255),
+	Color(175, 215, 0),
+	Color(175, 215, 95),
+	Color(175, 215, 135),
+	Color(175, 215, 175),
+	Color(175, 215, 215),
+	Color(175, 215, 255),
+	Color(175, 255, 0),
+	Color(175, 255, 95),
+	Color(175, 255, 135),
+	Color(175, 255, 175),
+	Color(175, 255, 215),
+	Color(175, 255, 255),
+	Color(215, 0, 0),
+	Color(215, 0, 95),
+	Color(215, 0, 135),
+	Color(215, 0, 175),
+	Color(215, 0, 215),
+	Color(215, 0, 255),
+	Color(215, 95, 0),
+	Color(215, 95, 95),
+	Color(215, 95, 135),
+	Color(215, 95, 175),
+	Color(215, 95, 215),
+	Color(215, 95, 255),
+	Color(215, 135, 0),
+	Color(215, 135, 95),
+	Color(215, 135, 135),
+	Color(215, 135, 175),
+	Color(215, 135, 215),
+	Color(215, 135, 255),
+	Color(215, 175, 0),
+	Color(215, 175, 95),
+	Color(215, 175, 135),
+	Color(215, 175, 175),
+	Color(215, 175, 215),
+	Color(215, 175, 255),
+	Color(215, 215, 0),
+	Color(215, 215, 95),
+	Color(215, 215, 135),
+	Color(215, 215, 175),
+	Color(215, 215, 215),
+	Color(215, 215, 255),
+	Color(215, 255, 0),
+	Color(215, 255, 95),
+	Color(215, 255, 135),
+	Color(215, 255, 175),
+	Color(215, 255, 215),
+	Color(215, 255, 255),
+	Color(255, 0, 0),
+	Color(255, 0, 95),
+	Color(255, 0, 135),
+	Color(255, 0, 175),
+	Color(255, 0, 215),
+	Color(255, 0, 255),
+	Color(255, 95, 0),
+	Color(255, 95, 95),
+	Color(255, 95, 135),
+	Color(255, 95, 175),
+	Color(255, 95, 215),
+	Color(255, 95, 255),
+	Color(255, 135, 0),
+	Color(255, 135, 95),
+	Color(255, 135, 135),
+	Color(255, 135, 175),
+	Color(255, 135, 215),
+	Color(255, 135, 255),
+	Color(255, 175, 0),
+	Color(255, 175, 95),
+	Color(255, 175, 135),
+	Color(255, 175, 175),
+	Color(255, 175, 215),
+	Color(255, 175, 255),
+	Color(255, 215, 0),
+	Color(255, 215, 95),
+	Color(255, 215, 135),
+	Color(255, 215, 175),
+	Color(255, 215, 215),
+	Color(255, 215, 255),
+	Color(255, 255, 0),
+	Color(255, 255, 95),
+	Color(255, 255, 135),
+	Color(255, 255, 175),
+	Color(255, 255, 215),
+	Color(255, 255, 255),
+	Color(8, 8, 8),
+	Color(18, 18, 18),
+	Color(28, 28, 28),
+	Color(38, 38, 38),
+	Color(48, 48, 48),
+	Color(58, 58, 58),
+	Color(68, 68, 68),
+	Color(78, 78, 78),
+	Color(88, 88, 88),
+	Color(98, 98, 98),
+	Color(98, 98, 98),
+	Color(118, 118, 118),
+	Color(128, 128, 128),
+	Color(138, 138, 138),
+	Color(148, 148, 148),
+	Color(158, 158, 158),
+	Color(168, 168, 168),
+	Color(178, 178, 178),
+	Color(188, 188, 188),
+	Color(198, 198, 198),
+	Color(208, 208, 208),
+	Color(218, 218, 218),
+	Color(228, 228, 228),
+	Color(238, 238, 238),
+];
 }
