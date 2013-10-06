@@ -155,7 +155,10 @@ class NestedTerminalEmulator : TerminalEmulator {
 						te.sendToApplication("\033");
 					else
 						// this is guaranteed to work since the enum values are the same by design
-						te.sendKeyToApplication(cast(TerminalKey) ev.key);
+						te.sendKeyToApplication(cast(TerminalKey) ev.key,
+							(ev.modifierState & ModifierState.shift)?true:false,
+							(ev.modifierState & ModifierState.alt)?true:false,
+							(ev.modifierState & ModifierState.control)?true:false);
 				}
 			break;
 			case InputEvent.Type.PasteEvent:

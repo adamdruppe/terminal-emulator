@@ -11,6 +11,11 @@
 	The windows version expects serverside.d to be running on the other side and needs plink.exe available to speak ssh.
 */
 
+enum string[dchar] altMappings = [
+	'a' : "Cool!",
+	'A' : "Boss",
+];
+
 /*
 	FIXME
 	mouse tracking inside gnu screen always turns vim to visual mode.
@@ -531,6 +536,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 		super(80, 24);
 
+		bool skipNextChar = false;
+
 		window.setEventHandlers(
 		delegate(MouseEvent ev) {
 			int termX = (ev.x - paddingLeft) / fontWidth;
@@ -620,6 +627,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			if(ev.pressed == false)
 				return;
 
+			// debug stuff
 			if(ev.key == Key.F12) {
 				debugMode = !debugMode;
 				return;
@@ -635,34 +643,37 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				addOutput(to!string(r[0].msecs) ~ "\n");
 				return;
 			}
+			// end debug stuff
 
-			if(ev.key == Key.PageUp && ev.modifierState & ModifierState.shift) {
+
+			// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
+			// doesn't have scrollback anyway. Thus the key will be forwarded to the application.
+			if(!alternateScreenActive && ev.key == Key.PageUp && ev.modifierState & ModifierState.shift) {
 				scrollback(10);
 				redraw();
 				return;
-			} else if(ev.key == Key.PageDown && ev.modifierState & ModifierState.shift) {
+			} else if(!alternateScreenActive && ev.key == Key.PageDown && ev.modifierState & ModifierState.shift) {
 				scrollback(-10);
 				redraw();
 				return;
-			} else if(ev.key != Key.Shift && ev.key != Key.Shift_r) {
+			} else if(!alternateScreenActive && ev.key != Key.Shift && ev.key != Key.Shift_r) {
 				if(endScrollback())
 					redraw();
 			}
 
 
-			if(ev.key == Key.F10) {
-				addOutput(alternateScreenActive ? "Alt screen\n" : "Std screen\n");
-				import std.conv;
-				addOutput(to!string(scrollZoneBottom));
-				redraw();
-				return;
-			}
+			// special keys
 
 			string magic() {
 				string code;
 				foreach(member; __traits(allMembers, TerminalKey))
 					if(member != "Escape")
-						code ~= "case Key." ~ member ~ ": sendKeyToApplication(TerminalKey." ~ member ~ "); break;";
+						code ~= "case Key." ~ member ~ ": sendKeyToApplication(TerminalKey." ~ member ~ "
+							, (ev.modifierState & ModifierState.shift)?true:false
+							, (ev.modifierState & ModifierState.alt)?true:false
+							, (ev.modifierState & ModifierState.ctrl)?true:false
+							, (ev.modifierState & ModifierState.windows)?true:false
+						); break;";
 				return code;
 			}
 
@@ -678,9 +689,24 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					// keep going, not special
 			}
 
+			// remapping of alt+key is possible too, at least on linux.
+			static if(UsingSimpledisplayX11)
+			if(ev.modifierState & ModifierState.alt) {
+				if(ev.character in altMappings) {
+					sendToApplication(altMappings[ev.character]);
+					skipNextChar = true;
+				}
+			}
+
 			return; // the character event handler will do others
 		},
 		(dchar c) {
+			if(skipNextChar) {
+				skipNextChar = false;
+				return;
+			}
+			if(c == '1')
+				return;
 			char[4] str;
 			import std.utf;
 			auto data = str[0 .. encode(str, c)];

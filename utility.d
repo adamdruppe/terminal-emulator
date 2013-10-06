@@ -41,11 +41,13 @@ version(terminalextensions_commandline) {
 void main(string[] args) {
 	auto term = Terminal(ConsoleOutputType.linear);
 
+	string[] functions;
+
 	alias mod = PT!(mixin("arsd.terminalextensions"));
 	foreach(member; __traits(allMembers, mod)) {
 		alias mem = PT!(__traits(getMember, mod, member));
 		static if(__traits(getProtection, mem) == "export") {
-			if(member == args[1]) {
+			if(args.length > 1 && member == args[1]) {
 				// call it
 				import std.traits;
 				import std.conv;
@@ -59,8 +61,15 @@ void main(string[] args) {
 				}
 
 				mem(a);
+				return;
 			}
+
+			functions ~= member;
 		}
 	}
+
+	term.writeln("Command not found, valid functions are:");
+	foreach(func; functions)
+		term.writeln("\t", func);
 }
 }

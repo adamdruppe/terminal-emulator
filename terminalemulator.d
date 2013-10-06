@@ -19,6 +19,11 @@ struct BrokenUpImage {
 	TerminalEmulator.TerminalCell[] representation;
 }
 
+struct CustomGlyph {
+	TrueColorImage image;
+	dchar substitute;
+}
+
 /**
 	An abstract class that does terminal emulation. You'll have to subclass it to make it work.
 
@@ -40,36 +45,74 @@ class TerminalEmulator {
 	protected abstract void soundBell(); /// sounds the bell
 	protected abstract void sendToApplication(const(void)[]); /// send some data to the information
 
+	// I believe \033[50~ and up are available for extensions everywhere.
+	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
+	// apparently shifted F5 is ^[[15;2~
+	// alt + f5 is ^[[15;3~
+	// alt+shift+f5 is ^[[15;4~
+
 	/// Send a non-character key sequence
-	public void sendKeyToApplication(TerminalKey key) {
+	public void sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+		void sendToApplicationModified(string s) {
+			bool anyModifier = shift || alt || ctrl || windows;
+			if(!anyModifier || applicationCursorKeys)
+				sendToApplication(s); // FIXME: applicationCursorKeys can still be shifted i think but meh
+			else {
+				string modifierNumber;
+				if(shift && alt && ctrl) modifierNumber = "8";
+				if(alt && ctrl && !shift) modifierNumber = "7";
+				if(shift && ctrl && !alt) modifierNumber = "6";
+				if(ctrl && !shift && !alt) modifierNumber = "5";
+				if(shift && alt && !ctrl) modifierNumber = "4";
+				if(alt && !shift && !ctrl) modifierNumber = "3";
+				if(shift && !alt && !ctrl) modifierNumber = "2";
+
+				string keyNumber;
+				char terminator;
+
+				if(s[$-1] == '~') {
+					keyNumber = s[2 .. $-1];
+					terminator = '~';
+				} else {
+					keyNumber = "1";
+					terminator = s[$ - 1];
+				}
+				// the xterm style is last bit tell us what it is
+				sendToApplication("\033[" ~ keyNumber ~ ";" ~ modifierNumber ~ terminator);
+			}
+		}
+
 		alias TerminalKey Key;
 		final switch(key) {
-			case Key.Left: sendToApplication(applicationCursorKeys ? "\033OD" : "\033[D"); break;
-			case Key.Up: sendToApplication(applicationCursorKeys ? "\033OA" : "\033[A"); break;
-			case Key.Down: sendToApplication(applicationCursorKeys ? "\033OB" : "\033[B"); break;
-			case Key.Right: sendToApplication(applicationCursorKeys ? "\033OC" : "\033[C"); break;
+			case Key.Left: sendToApplicationModified(applicationCursorKeys ? "\033OD" : "\033[D"); break;
+			case Key.Up: sendToApplicationModified(applicationCursorKeys ? "\033OA" : "\033[A"); break;
+			case Key.Down: sendToApplicationModified(applicationCursorKeys ? "\033OB" : "\033[B"); break;
+			case Key.Right: sendToApplicationModified(applicationCursorKeys ? "\033OC" : "\033[C"); break;
 
-			case Key.Home: sendToApplication("\033[1~"); break;
-			case Key.Insert: sendToApplication("\033[2~"); break;
-			case Key.Delete: sendToApplication("\033[3~"); break;
-			case Key.End: sendToApplication("\033[4~"); break;
-			case Key.PageUp: sendToApplication("\033[5~"); break;
-			case Key.PageDown: sendToApplication("\033[6~"); break;
+			case Key.Home: sendToApplicationModified(applicationCursorKeys ? "\033OH" : (1 ? "\033[H" : "\033[1~")); break;
+			case Key.Insert: sendToApplicationModified("\033[2~"); break;
+			case Key.Delete: sendToApplicationModified("\033[3~"); break;
 
-			case Key.F1: sendToApplication(applicationCursorKeys ? "\033OP" : "\033[11~"); break;
-			case Key.F2: sendToApplication(applicationCursorKeys ? "\033OQ" : "\033[12~"); break;
-			case Key.F3: sendToApplication(applicationCursorKeys ? "\033OR" : "\033[13~"); break;
-			case Key.F4: sendToApplication(applicationCursorKeys ? "\033OS" : "\033[14~"); break;
-			case Key.F5: sendToApplication("\033[15~"); break;
-			case Key.F6: sendToApplication("\033[17~"); break;
-			case Key.F7: sendToApplication("\033[18~"); break;
-			case Key.F8: sendToApplication("\033[19~"); break;
-			case Key.F9: sendToApplication("\033[20"); break;
-			case Key.F10: sendToApplication("\033[21~"); break;
-			case Key.F11: sendToApplication("\033[23~"); break;
-			case Key.F12: sendToApplication("\033[24~"); break;
+			// the 1? is xterm vs gnu screen. but i really want xterm compatibility.
+			case Key.End: sendToApplicationModified(applicationCursorKeys ? "\033OF" : (1 ? "\033[F" : "\033[4~")); break;
+			case Key.PageUp: sendToApplicationModified("\033[5~"); break;
+			case Key.PageDown: sendToApplicationModified("\033[6~"); break;
 
-			case Key.Escape: sendToApplication("\033"); break;
+			// the first one here is preferred, the second option is what xterm does if you turn on the "old function keys" option, which most apps don't actually expect
+			case Key.F1: sendToApplicationModified(1 ? "\033OP" : "\033[11~"); break;
+			case Key.F2: sendToApplicationModified(1 ? "\033OQ" : "\033[12~"); break;
+			case Key.F3: sendToApplicationModified(1 ? "\033OR" : "\033[13~"); break;
+			case Key.F4: sendToApplicationModified(1 ? "\033OS" : "\033[14~"); break;
+			case Key.F5: sendToApplicationModified("\033[15~"); break;
+			case Key.F6: sendToApplicationModified("\033[17~"); break;
+			case Key.F7: sendToApplicationModified("\033[18~"); break;
+			case Key.F8: sendToApplicationModified("\033[19~"); break;
+			case Key.F9: sendToApplicationModified("\033[20"); break;
+			case Key.F10: sendToApplicationModified("\033[21~"); break;
+			case Key.F11: sendToApplicationModified("\033[23~"); break;
+			case Key.F12: sendToApplicationModified("\033[24~"); break;
+
+			case Key.Escape: sendToApplicationModified("\033"); break;
 		}
 	}
 
@@ -1454,7 +1497,7 @@ version(Windows) {
 		cmdLine[0 .. commandLine.length] = commandLine[];
 		cmdLine[commandLine.length] = 0;
 		import std.string;
-		if(CreateProcessA(toStringz(program), cmdLine.ptr, null, null, true, 0/*0x08000000 /* CREATE_NO_WINDOW */, null /* environment */, null, &startupInfo, &pi) == 0)
+		if(CreateProcessA(program is null ? null : toStringz(program), cmdLine.ptr, null, null, true, 0/*0x08000000 /* CREATE_NO_WINDOW */, null /* environment */, null, &startupInfo, &pi) == 0)
 			throw new Exception("CreateProcess " ~ to!string(GetLastError()));
 
 		if(RegisterWaitForSingleObject(&waitHandle, pi.hProcess, &childCallback, cast(void*) GetCurrentThreadId(), INFINITE, 4 /* WT_EXECUTEINWAITTHREAD */ | 8 /* WT_EXECUTEONLYONCE */) == 0)
