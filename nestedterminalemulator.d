@@ -37,7 +37,8 @@ void main(string[] args) {
 		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
 
 		SetConsoleMode(terminal.hConsole, ENABLE_PROCESSED_OUTPUT); // no more line wrapping so our last line outputted is cool
-		SetConsoleMode(input.inputHandle, ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT); // disabling processed input so ctrl+c comes through to us
+		SetConsoleMode(input.inputHandle, 0x80 /*ENABLE_EXTENDED_FLAGS*/ | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT); // disabling processed input so ctrl+c comes through to us
+		terminal._wrapAround = false;
 
 		auto te = new NestedTerminalEmulator(inwritePipe, outreadPipe, &terminal, &input);
 
@@ -126,6 +127,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 	}
 
 	void handleEvent(InputEvent event) {
+	import std.conv;
 		auto te = this;
 		final switch(event.type) {
 				// FIXME: what about Ctrl+Z? maybe terminal.d should catch that signal too. SIGSTOP i think tho could be SIGTSTP
@@ -135,6 +137,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 				if(ce.eventType == CharacterEvent.Type.Released)
 					return;
 
+				endScrollback();
 				char[4] str;
 				import std.utf;
 				auto data = str[0 .. encode(str, ce.character)];
@@ -155,17 +158,26 @@ class NestedTerminalEmulator : TerminalEmulator {
 						te.sendToApplication("\033");
 					else
 						// this is guaranteed to work since the enum values are the same by design
-						te.sendKeyToApplication(cast(TerminalKey) ev.key,
+						if(te.sendKeyToApplication(cast(TerminalKey) ev.key,
 							(ev.modifierState & ModifierState.shift)?true:false,
 							(ev.modifierState & ModifierState.alt)?true:false,
-							(ev.modifierState & ModifierState.control)?true:false);
+							(ev.modifierState & ModifierState.control)?true:false))
+							redraw();
 				}
 			break;
 			case InputEvent.Type.PasteEvent:
 				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.PasteEvent));
 			break;
 			case InputEvent.Type.MouseEvent:
-				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.MouseEvent));
+				auto me = event.get!(InputEvent.Type.MouseEvent);
+
+				if(sendMouseInputToApplication(me.x, me.y,
+					cast(arsd.terminalemulator.MouseEventType) me.eventType,
+					cast(arsd.terminalemulator.MouseButton) me.buttons,
+					(me.modifierState & ModifierState.shift) ? true : false,
+					(me.modifierState & ModifierState.control) ? true : false
+				))
+					redraw();
 			break;
 			case InputEvent.Type.CustomEvent:
 			break;
@@ -177,9 +189,30 @@ class NestedTerminalEmulator : TerminalEmulator {
 		if(terminal && t.length)
 			terminal.setTitle(t);
 	}
-	protected override void changeIconTitle(string) {}
-	protected override void changeTextAttributes(TextAttributes) {}
+	protected override void changeIconTitle(string) {} // doesn't matter
+	protected override void changeTextAttributes(TextAttributes) {} // ditto
 	protected override void soundBell() { }
+	protected override void copyToClipboard(string text) {
+		version(Windows) {
+			simpledisplay.setClipboardText(simpleWindowConsole, text);
+		}
+	}
+	protected override void pasteFromClipboard(void delegate(string) dg) {
+		version(Windows) {
+			simpledisplay.getClipboardText(simpleWindowConsole, dg);
+		}
+	}
+	version(Windows) {
+		static import simpledisplay; // this is for copy/paste
+		private simpledisplay.SimpleWindow _simpleWindowConsole;
+		protected simpledisplay.SimpleWindow simpleWindowConsole() {
+			if(_simpleWindowConsole is null) {
+				auto handle = simpledisplay.GetConsoleWindow();
+				_simpleWindowConsole = new simpledisplay.SimpleWindow(handle);
+			}
+			return _simpleWindowConsole;
+		}
+	}
 
 	bool debugMode;
 	mixin PtySupport!(doNothing);
@@ -193,11 +226,13 @@ class NestedTerminalEmulator : TerminalEmulator {
 
 		terminal.hideCursor();
 
-		foreach(ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
+
+			bool insideSelection = idx >= selectionStart && idx < selectionEnd;
 
 			auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
 			auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
@@ -205,8 +240,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 			ushort tfg, tbg;
 			{
 				import t = terminal;
-				tfg = cell.attributes.foregroundIndex;
 				tbg = cell.attributes.backgroundIndex;
+				tfg = cell.attributes.foregroundIndex;
 
 				version(Windows) {
 					ushort b, r;
@@ -240,11 +275,12 @@ class NestedTerminalEmulator : TerminalEmulator {
 					// on Windows, we hacked the mode above so terminal.d doesn't track the console correctly
 					// see also for a potential improvement:
 					// http://msdn.microsoft.com/en-us/library/windows/desktop/ms687404%28v=vs.85%29.aspx
-					version(Windows)
-						terminal.moveTo(x, y, ForceOption.alwaysSend);
-					else
 					terminal.moveTo(x, y);
-					terminal.color(tfg, tbg);
+
+					bool reverse = cell.attributes.inverse != reverseVideo; /* != == ^ btw */
+					if(insideSelection)
+						reverse = !reverse;
+					terminal.color(tfg, tbg, ForceOption.automatic, reverse);
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {
 				}

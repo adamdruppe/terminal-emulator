@@ -16,6 +16,19 @@ module arsd.terminalextensions;
 
 import terminal; // for sending the commands
 import arsd.terminalemulator; // for the various enums (seems silly to pull the whole module just for some magic numbers though :( )
+import ac = arsd.color;
+
+export void changeForegroundColor(Terminal* t, ac.Color c) {
+	import std.string;
+	t.writeln("hey ", c);
+	t.writeStringRaw(format("\033[38;2;%d;%d;%dm", c.r, c.g, c.b));
+	t.writeln("yo!");
+}
+
+export void changeBackgroundColor(Terminal* t, ac.Color c) {
+	import std.string;
+	t.writeStringRaw(format("\033[48;2;%d;%d;%dm", c.r, c.g, c.b));
+}
 
 export void changeDefaultCursor(Terminal* t, TerminalEmulator.CursorStyle style) {
 	t.writeStringRaw("");
@@ -36,40 +49,59 @@ export void changeCurrentCursor(Terminal* t, TerminalEmulator.CursorStyle style)
 	}
 }
 
+// intended for things like attaching screen
+export void clearScrollbackHistory(Terminal* t) {
+
+}
+
+void addScrollbackHistory(Terminal* t, string[] history) {
+
+}
+
 version(terminalextensions_commandline) {
 	template PT(alias a) { alias PT = a; }
-void main(string[] args) {
-	auto term = Terminal(ConsoleOutputType.linear);
+	void main(string[] args) {
+		/*
+		if(env["TERM_EXTENSIONS"] != "arsd")
+			writeln("Warning: extensions may not be available on this terminal");
+		*/
 
-	string[] functions;
+		auto term = Terminal(ConsoleOutputType.linear);
+		term._suppressDestruction = true;
 
-	alias mod = PT!(mixin("arsd.terminalextensions"));
-	foreach(member; __traits(allMembers, mod)) {
-		alias mem = PT!(__traits(getMember, mod, member));
-		static if(__traits(getProtection, mem) == "export") {
-			if(args.length > 1 && member == args[1]) {
-				// call it
-				import std.traits;
-				import std.conv;
-				ParameterTypeTuple!mem a;
-				a[0] = &term;
+		string[] functions;
 
-				foreach(i, arg; a) {
-					static if(i) {
-						a[i] = to!(typeof(a[i]))(args[i + 1]);
+		alias mod = PT!(mixin("arsd.terminalextensions"));
+		foreach(member; __traits(allMembers, mod))
+		static if(__traits(compiles, PT!(__traits(getMember, mod, member)))) {
+			alias mem = PT!(__traits(getMember, mod, member));
+			static if(__traits(getProtection, mem) == "export") {
+				if(args.length > 1 && member == args[1]) {
+					// call it
+					import std.traits;
+					import std.conv;
+					ParameterTypeTuple!mem a;
+					a[0] = &term;
+
+					foreach(i, arg; a) {
+						static if(i) {
+							static if(is(typeof(arg) == ac.Color))
+								a[i] = ac.Color.fromString(args[i + 1]);
+							else
+								a[i] = to!(typeof(a[i]))(args[i + 1]);
+						}
 					}
+
+					mem(a);
+					return;
 				}
 
-				mem(a);
-				return;
+				functions ~= member;
 			}
-
-			functions ~= member;
 		}
-	}
 
-	term.writeln("Command not found, valid functions are:");
-	foreach(func; functions)
-		term.writeln("\t", func);
-}
+		term.writeln("Command not found, valid functions are:");
+		foreach(func; functions)
+			term.writeln("\t", func);
+	}
 }

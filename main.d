@@ -455,6 +455,18 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			XBell(XDisplayConnection.get(), 50);
 	}
 
+	protected override void copyToClipboard(string text) {
+		static if(UsingSimpledisplayX11)
+			setPrimarySelection(window, text);
+	}
+
+	protected override void pasteFromClipboard(void delegate(string) dg) {
+		static if(UsingSimpledisplayX11)
+			getPrimarySelection(window, dg);
+		else
+		{} // FIXME: use the clipboard
+	}
+
 	void resizeImage() {
 		if(usingTtf)
 			img = new Image(window.width, window.height);
@@ -487,10 +499,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	version(Windows)
 	HFONT hFont;
-
-	// FIXME: move this to the base class
-	int selectionStart; // an offset into the screen buffer
-	int selectionEnd; // ditto
 
 	this(int fontSize = 0) {
 		if(fontSize) {
@@ -544,84 +552,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			int termY = (ev.y - paddingTop) / fontHeight;
 			// FIXME: make sure termx and termy are in bounds
 
-			if(ev.type == MouseEventType.buttonReleased) {
-				if(mouseButtonReleaseTracking) {
-					int b = 3;
-					sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (termX+1 + 32) ~ cast(char) (termY+1 + 32));
-				}
-			}
-
-			if(ev.type == MouseEventType.buttonPressed) {
-				if(!(ev.modifierState & ModifierState.shift) && mouseButtonTracking) {
-					int b;
-					// lol the xterm mouse thing sucks like javascript! unbelievable
-					if(ev.button == MouseButton.left)
-						b = 0;
-					else if(ev.button == MouseButton.right)
-						b = 2;
-					else if(ev.button == MouseButton.middle)
-						b = 1;
-					else if(ev.button == MouseButton.wheelUp)
-						b = 64 | 0;
-					else if(ev.button == MouseButton.wheelDown)
-						b = 64 | 1;
-
-					if(ev.type == MouseEventType.buttonReleased)
-						b = 3;
-					// FIXME or these in
-					//  4=Shift, 8=Meta, 16=Control
-
-					int x = termX;
-					int y = termY;
-					x++; y++; // applications expect it to be one-based
-					sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (x + 32) ~ cast(char) (y + 32));
-				} else {
-					version(Windows) {
-						enum pasteButton = MouseButton.right; // my laptop doesn't have a middle mouse button, so i'll use right to paste
-						enum extendButton = MouseButton.middle;
-					} else {
-						enum pasteButton = MouseButton.middle;
-						enum extendButton = MouseButton.right;
-					}
-
-					if(ev.button == pasteButton) {
-						static if(UsingSimpledisplayX11)
-						getPrimarySelection(window, (string s) {
-							if(bracketedPasteMode)
-								sendToApplication("\033[200~");
-
-							sendToApplication(s);
-
-							if(bracketedPasteMode)
-								sendToApplication("\033[201~");
-						});
-						else
-						{} // FIXME: use the clipboard
-					}
-
-					if(ev.button == MouseButton.wheelUp) {
-						scrollback(1);
-						redraw();
-					}
-					if(ev.button == MouseButton.wheelDown) {
-						scrollback(-1);
-						redraw();
-					}
-
-					if(ev.button == MouseButton.left) {
-						selectionStart = termY * screenWidth + termX;
-						selectionEnd = selectionStart;
-					}
-					if(ev.button == extendButton) {
-						selectionEnd = termY * screenWidth + termX;
-						auto text = getPlainText(selectionStart, selectionEnd);
-						if(text.length) {
-							static if(UsingSimpledisplayX11)
-								setPrimarySelection(window, text);
-						}
-					}
-				}
-			}
+			if(sendMouseInputToApplication(termX, termY,
+				cast(arsd.terminalemulator.MouseEventType) ev.type,
+				cast(arsd.terminalemulator.MouseButton) ev.button,
+				(ev.modifierState & ModifierState.shift) ? true : false,
+				(ev.modifierState & ModifierState.ctrl) ? true : false
+			))
+				redraw();
 		},
 		delegate(KeyEvent ev) {
 			if(ev.pressed == false)
@@ -646,34 +583,18 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			// end debug stuff
 
 
-			// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
-			// doesn't have scrollback anyway. Thus the key will be forwarded to the application.
-			if(!alternateScreenActive && ev.key == Key.PageUp && ev.modifierState & ModifierState.shift) {
-				scrollback(10);
-				redraw();
-				return;
-			} else if(!alternateScreenActive && ev.key == Key.PageDown && ev.modifierState & ModifierState.shift) {
-				scrollback(-10);
-				redraw();
-				return;
-			} else if(!alternateScreenActive && ev.key != Key.Shift && ev.key != Key.Shift_r) {
-				if(endScrollback())
-					redraw();
-			}
-
-
 			// special keys
 
 			string magic() {
 				string code;
 				foreach(member; __traits(allMembers, TerminalKey))
 					if(member != "Escape")
-						code ~= "case Key." ~ member ~ ": sendKeyToApplication(TerminalKey." ~ member ~ "
+						code ~= "case Key." ~ member ~ ": if(sendKeyToApplication(TerminalKey." ~ member ~ "
 							, (ev.modifierState & ModifierState.shift)?true:false
 							, (ev.modifierState & ModifierState.alt)?true:false
 							, (ev.modifierState & ModifierState.ctrl)?true:false
 							, (ev.modifierState & ModifierState.windows)?true:false
-						); break;";
+						)) redraw(); break;";
 				return code;
 			}
 
@@ -705,8 +626,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				skipNextChar = false;
 				return;
 			}
-			if(c == '1')
-				return;
+
+			endScrollback();
 			char[4] str;
 			import std.utf;
 			auto data = str[0 .. encode(str, c)];
@@ -792,11 +713,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		int posx = paddingLeft;
 		int posy = paddingTop;
 		int x;
-		foreach(ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
+			bool insideSelection = idx >= selectionStart && idx < selectionEnd;
 
 				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
 				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
@@ -806,11 +728,16 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
 
 				// FIXME: this could be more efficient, simpledisplay could get better graphics context handling
-				painter.fillColor = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
-				painter.outlineColor = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
+
+				bool reverse = (cell.attributes.inverse != reverseVideo);
+				if(insideSelection)
+					reverse = !reverse;
+
+				painter.fillColor = reverse ? cell.attributes.foreground : cell.attributes.background;
+				painter.outlineColor = reverse ? cell.attributes.foreground : cell.attributes.background;
 				painter.drawRectangle(Point(posx, posy), fontWidth - 1, fontHeight - 1);
 				painter.fillColor = Color.transparent;
-				painter.outlineColor = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
+				painter.outlineColor = reverse ? cell.attributes.background : cell.attributes.foreground;
 
 				if(cell.ch != dchar.init) {
 					char[4] str;

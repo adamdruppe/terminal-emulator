@@ -45,14 +45,197 @@ class TerminalEmulator {
 	protected abstract void soundBell(); /// sounds the bell
 	protected abstract void sendToApplication(const(void)[]); /// send some data to the information
 
+	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
+	protected abstract void pasteFromClipboard(void delegate(string)); /// we pass it a delegate that should accept the data
+
 	// I believe \033[50~ and up are available for extensions everywhere.
 	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
 	// apparently shifted F5 is ^[[15;2~
 	// alt + f5 is ^[[15;3~
 	// alt+shift+f5 is ^[[15;4~
 
+	public void sendPasteData(string data) {
+		if(bracketedPasteMode)
+			sendToApplication("\033[200~");
+
+		sendToApplication(data);
+
+		if(bracketedPasteMode)
+			sendToApplication("\033[201~");
+	}
+
+	bool dragging;
+	int lastDragX, lastDragY;
+	public bool sendMouseInputToApplication(int termX, int termY, MouseEventType type, MouseButton button, bool shift, bool ctrl) {
+		int baseEventCode() {
+			int b;
+			// lol the xterm mouse thing sucks like javascript! unbelievable
+			// it doesn't support two buttons at once...
+			if(button == MouseButton.left)
+				b = 0;
+			else if(button == MouseButton.right)
+				b = 2;
+			else if(button == MouseButton.middle)
+				b = 1;
+			else if(button == MouseButton.wheelUp)
+				b = 64 | 0;
+			else if(button == MouseButton.wheelDown)
+				b = 64 | 1;
+			else
+				b = 3; // none pressed or button released
+
+			if(shift)
+				b |= 4;
+			if(ctrl)
+				b |= 16;
+
+			return b;
+		}
+
+
+		if(type == MouseEventType.buttonReleased) {
+			// X sends press and release on wheel events, but we certainly don't care about those
+			if(button == MouseButton.wheelUp || button == MouseButton.wheelDown)
+				return false;
+
+			if(dragging) {
+				auto text = getPlainText(selectionStart, selectionEnd);
+				if(text.length) {
+					copyToClipboard(text);
+				}
+			}
+
+			dragging = false;
+			if(mouseButtonReleaseTracking) {
+				int b = baseEventCode;
+				b |= 3; // always send none / button released
+				sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (termX+1 + 32) ~ cast(char) (termY+1 + 32));
+			}
+		}
+
+		if(type == MouseEventType.motion) {
+			if(termX != lastDragX || termY != lastDragY) {
+				lastDragY = termY;
+				lastDragX = termX;
+				if(mouseMotionTracking || (mouseButtonMotionTracking && button)) {
+					int b = baseEventCode;
+					sendToApplication("\033[M" ~ cast(char) ((b | 32) + 32) ~ cast(char) (termX+1 + 32) ~ cast(char) (termY+1 + 32));
+				}
+
+				if(dragging) {
+					auto idx = termY * screenWidth + termX;
+					if(idx < selectionStart) {
+						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[idx .. selectionStart])
+							cell.invalidated = true;
+						selectionStart = idx;
+					} else if(idx > selectionEnd) {
+						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionEnd .. idx])
+							cell.invalidated = true;
+						selectionEnd = idx;
+					} else {
+						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[idx .. selectionEnd])
+							cell.invalidated = true;
+						selectionEnd = idx;
+					}
+					return true;
+				}
+			}
+		}
+
+		if(type == MouseEventType.buttonPressed) {
+			if(!(shift) && mouseButtonTracking) {
+				int b = baseEventCode;
+
+				int x = termX;
+				int y = termY;
+				x++; y++; // applications expect it to be one-based
+				sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (x + 32) ~ cast(char) (y + 32));
+			} else {
+				version(Windows) {
+					enum pasteButton = MouseButton.right; // my laptop doesn't have a middle mouse button, so i'll use right to paste
+					enum extendButton = MouseButton.middle;
+				} else {
+					enum pasteButton = MouseButton.middle;
+					enum extendButton = MouseButton.right;
+				}
+
+				if(button == pasteButton) {
+					pasteFromClipboard(&sendPasteData);
+				}
+
+				if(button == MouseButton.wheelUp) {
+					scrollback(1);
+					return true;
+				}
+				if(button == MouseButton.wheelDown) {
+					scrollback(-1);
+					return true;
+				}
+
+				if(button == MouseButton.left) {
+					// we invalidate the old selection since it should no longer be highlighted...
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionStart .. selectionEnd])
+						cell.invalidated = true;
+
+					selectionStart = termY * screenWidth + termX;
+					selectionEnd = selectionStart;
+					dragging = true;
+					lastDragX = termX;
+					lastDragY = termY;
+
+					// then invalidate the new selection as well since it should be highlighted
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionStart .. selectionEnd])
+						cell.invalidated = true;
+
+					return true;
+				}
+				if(button == extendButton) {
+					auto oldSelectionEnd = selectionEnd;
+					selectionEnd = termY * screenWidth + termX;
+
+					if(selectionEnd < oldSelectionEnd) {
+						auto tmp = selectionEnd;
+						selectionEnd = oldSelectionEnd;
+						oldSelectionEnd = tmp;
+					}
+
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[oldSelectionEnd .. selectionEnd])
+						cell.invalidated = true;
+
+					auto text = getPlainText(selectionStart, selectionEnd);
+					if(text.length) {
+						copyToClipboard(text);
+					}
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	int selectionStart; // an offset into the screen buffer
+	int selectionEnd; // ditto
+
 	/// Send a non-character key sequence
-	public void sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+	public bool sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+		bool redrawRequired = false;
+
+		// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
+		// doesn't have scrollback anyway. Thus the key will be forwarded to the application.
+		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageUp && shift) {
+			scrollback(10);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageDown && shift) {
+			scrollback(-10);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack)) { // && ev.key != Key.Shift && ev.key != Key.Shift_r) {
+			if(endScrollback())
+				redrawRequired = true;
+		}
+
+
+
 		void sendToApplicationModified(string s) {
 			bool anyModifier = shift || alt || ctrl || windows;
 			if(!anyModifier || applicationCursorKeys)
@@ -128,12 +311,27 @@ class TerminalEmulator {
 
 			case Key.Escape: sendToApplicationModified("\033"); break;
 		}
+
+		return redrawRequired;
 	}
 
 	/// if a binary extension is triggered, the implementing class is responsible for figuring out how it should be made to fit into the screen buffer
 	protected /*abstract*/ BrokenUpImage handleBinaryExtensionData(const(ubyte)[]) {
 		return BrokenUpImage();
 	}
+
+	/// If you subclass this and return true, you can scroll on command without needing to redraw the entire screen;
+	/// returning true here suppresses the automatic invalidation of scrolled lines (except the new one).
+	protected bool scrollLines(int howMany, bool scrollUp) {
+		return false;
+	}
+
+	// might be worth doing the redraw magic in here too.
+	protected void drawTextSection(int x, int y, TextAttributes attributes, in dchar[] text, bool isAllSpaces) {
+		// if you implement this it will always give you a continuous block on a single line. note that text may be a bunch of spaces, in that case you can just draw the bg color to clear the area
+		// or you can redraw based on the invalidated flag on the buffer
+	}
+	// FIXME: what about image sections? maybe it is still necessary to loop through them
 
 	bool newlineHack; // not sure what's up with this but it helps get around gnu screen bugs
 		// maybe \n should always just advance, so \r\n is how you go ahead. i don't know though that seems wrong on unix
@@ -267,6 +465,7 @@ class TerminalEmulator {
 			plain.attributes = defaultTextAttributes();
 			plain.invalidated = true;
 			foreach(i; 0 .. count) {
+				// FIXME: should that be cursorY or scrollZoneTop?
 				for(int y = scrollZoneBottom; y > cursorY; y--)
 				foreach(x; 0 .. screenWidth) {
 					ASS[y][x] = ASS[y - 1][x];
@@ -278,6 +477,27 @@ class TerminalEmulator {
 			}
 		}
 	}
+
+	void scrollUp(int count = 1) {
+		if(cursorY + 1 < screenHeight) {
+			TerminalCell plain;
+			plain.ch = ' ';
+			plain.attributes = defaultTextAttributes();
+			plain.invalidated = true;
+			foreach(i; 0 .. count) {
+				// FIXME: should that be cursorY or scrollZoneBottom?
+				for(int y = scrollZoneTop; y < cursorY; y++)
+				foreach(x; 0 .. screenWidth) {
+					ASS[y][x] = ASS[y + 1][x];
+					ASS[y][x].invalidated = true;
+				}
+
+				foreach(x; 0 .. screenWidth)
+					ASS[cursorY][x] = plain;
+			}
+		}
+	}
+
 
 	bool readingExtensionData;
 	string extensionData;
@@ -318,6 +538,9 @@ class TerminalEmulator {
 			}
 
 			if(readingEsc) {
+				if(b == 10) {
+					readingEsc = false;
+				}
 				esc ~= b;
 
 				if(esc.length == 1 && esc[0] == '7') {
@@ -336,8 +559,17 @@ class TerminalEmulator {
 					// application keypad
 					esc = null;
 					readingEsc = false;
+				} else if(esc.length == 2 && esc[0] == '%' && esc[1] == 'G') {
+					// UTF-8 mode
+					esc = null;
+					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == '8') {
 					cursorPosition = savedCursor;
+					esc = null;
+					readingEsc = false;
+				} else if(esc.length == 1 && esc[0] == 'c') {
+					// reset
+					// FIXME
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == '>') {
@@ -428,7 +660,7 @@ class TerminalEmulator {
 		bool scrollbackCursorShowing;
 		int scrollbackCursorX;
 		int scrollbackCursorY;
-		bool scrollingBack;
+		protected bool scrollingBack;
 
 		int currentScrollback;
 	}
@@ -587,13 +819,13 @@ class TerminalEmulator {
 		bool mouseButtonTracking;
 		bool mouseMotionTracking;
 		bool mouseButtonReleaseTracking;
-		bool mouseHighlightTracking;
+		bool mouseButtonMotionTracking;
 
 		void allMouseTrackingOff() {
 			mouseMotionTracking = false;
 			mouseButtonTracking = false;
 			mouseButtonReleaseTracking = false;
-			mouseHighlightTracking = false;
+			mouseButtonMotionTracking = false;
 		}
 
 		bool wraparoundMode = true;
@@ -604,6 +836,7 @@ class TerminalEmulator {
 		bool reverseVideo;
 		bool applicationCursorKeys;
 
+		bool scrollingEnabled = true;
 		int scrollZoneTop;
 		int scrollZoneBottom;
 
@@ -672,7 +905,7 @@ class TerminalEmulator {
 		dchar utf8Sequence;
 		int utf8BytesRemaining;
 		int currentUtf8Shift;
-		//bool newLineOnNext;
+		bool newLineOnNext;
 		void addOutput(ubyte b) {
 			// this takes in bytes at a time, but since the input encoding is assumed to be UTF-8, we need to gather the bytes
 			if(utf8BytesRemaining == 0) {
@@ -705,8 +938,12 @@ class TerminalEmulator {
 				// add this to the byte we're doing right now...
 				utf8BytesRemaining--;
 				currentUtf8Shift -= 6;
-				import std.string;
-				assert((b & 0b11000000) == 0b10000000, format("invalid utf 8 sequence on input %b",utf8Sequence));
+				if(!(b & 0b11000000) == 0b10000000) {
+					// invalid utf-8 sequence,
+					// discard it and try to continue
+					utf8BytesRemaining = 0;
+					return;
+				}
 				uint shifted = b;
 				shifted &= 0b00111111;
 				shifted <<= currentUtf8Shift;
@@ -717,13 +954,17 @@ class TerminalEmulator {
 				return; // not enough data yet, wait for more before displaying anything
 
 			if(utf8Sequence == 10) {
+				newLineOnNext = false;
 				auto cx = cursorX; // FIXME: this cx thing is a hack, newLine should prolly just do the right thing
 				newLine(true);
 				cursorX = cx;
 			} else {
-				//if(newLineOnNext)
-					//newLine();
-				//newLineOnNext = false;
+				if(newLineOnNext) {
+					newLineOnNext = false;
+					// only if we're still on the right side...
+					if(cursorX == screenWidth - 1)
+						newLine(false);
+				}
 				TerminalCell tc;
 				tc.ch = utf8Sequence;
 				tc.attributes = currentAttributes;
@@ -741,7 +982,7 @@ class TerminalEmulator {
 			}
 
 			cursorX = 0;
-			if(cursorY == scrollZoneBottom) {
+			if(scrollingEnabled && cursorY == scrollZoneBottom) {
 				size_t idx = scrollZoneTop * screenWidth;
 				foreach(l; scrollZoneTop .. scrollZoneBottom)
 				foreach(i; 0 .. screenWidth) {
@@ -789,8 +1030,11 @@ class TerminalEmulator {
 			// FIXME: the wraparoundMode seems to help gnu screen but then it doesn't go away properly and that messes up bash...
 			//if(wraparoundMode && cursorX == screenWidth - 1) {
 			if((!newlineHack) && cursorX == screenWidth - 1) {
-				//newLineOnNext = true;
-				newLine(false);
+				// FIXME: should this check the scrolling zone instead?
+				newLineOnNext = true;
+
+				//if(!alternateScreenActive || cursorY < screenHeight - 1)
+					//newLine(false);
 				scrollbackWrappingAt = currentScrollbackLine.length;
 			} else
 				cursorX = cursorX + 1;
@@ -823,36 +1067,89 @@ class TerminalEmulator {
 				return getArgsBase(1, defaults);
 			}
 
+			// FIXME
+			// from  http://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+			// check out this section: "Window manipulation (from dtterm, as well as extensions)"
+			// especially the title stack, that should rock
+			/*
+P s = 2 2 ; 0 → Save xterm icon and window title on stack.
+P s = 2 2 ; 1 → Save xterm icon title on stack.
+P s = 2 2 ; 2 → Save xterm window title on stack.
+P s = 2 3 ; 0 → Restore xterm icon and window title from stack.
+P s = 2 3 ; 1 → Restore xterm icon title from stack.
+P s = 2 3 ; 2 → Restore xterm window title from stack.
+
+			*/
+
 			if(esc[0] == ']' && esc.length > 1) {
-				auto arg = cast(string) esc[3 .. $-1];
-				switch(cast(string) esc[1..3]) {
-					case "0;":
-						// icon name and window title
-						windowTitle = iconTitle = arg;
-						changeWindowTitle(windowTitle);
-						changeIconTitle(iconTitle);
-					break;
-					case "1;":
-						// icon name
-						iconTitle = arg;
-						changeIconTitle(iconTitle);
-					break;
-					case "2;":
-						// window title
-						windowTitle = arg;
-						changeWindowTitle(windowTitle);
-					break;
-					case "12":
-						arg = arg[1 ..$];
-						if(arg.length) {
-							cursorColor = Color.fromString(arg);
-							foreach(ref p; cursorColor.components[0 .. 3])
-								p ^= 0xff;
-						} else
-							cursorColor = Color.white;
-					break;
-					default:
-						assert(0, "" ~ cast(char) esc[1]);
+				int idx = -1;
+				foreach(i, e; esc)
+					if(e == ';') {
+						idx = i;
+						break;
+					}
+				if(idx != -1) {
+					auto arg = cast(string) esc[idx + 1 .. $-1];
+					switch(cast(string) esc[1..idx]) {
+						case "0":
+							// icon name and window title
+							windowTitle = iconTitle = arg;
+							changeWindowTitle(windowTitle);
+							changeIconTitle(iconTitle);
+						break;
+						case "1":
+							// icon name
+							iconTitle = arg;
+							changeIconTitle(iconTitle);
+						break;
+						case "2":
+							// window title
+							windowTitle = arg;
+							changeWindowTitle(windowTitle);
+						break;
+						case "12":
+							arg = arg[1 ..$];
+							if(arg.length) {
+								cursorColor = Color.fromString(arg);
+								foreach(ref p; cursorColor.components[0 .. 3])
+									p ^= 0xff;
+							} else
+								cursorColor = Color.white;
+						break;
+						case "50":
+							// change font
+						break;
+						case "52":
+							// copy/paste control
+							// echo -e "\033]52;p;?\007"
+							// the p == primary
+							// the data after it is either base64 stuff to copy or ? to request a paste
+						break;
+						case "4":
+							// palette change or query
+							        // set color #0 == black
+							// echo -e '\033]4;0;black\007'
+							/*
+								echo -e '\033]4;9;?\007' ; cat
+
+								^[]4;9;rgb:ffff/0000/0000^G
+							*/
+
+							// FIXME: if the palette changes, we should redraw so the change is immediately visible (as if we were using a real palette)
+						break;
+						case "104":
+							// palette reset
+							// reset color #0
+							// echo -e '\033[104;0\007'
+						break;
+						/* Extensions */
+						case "5000":
+							// change window icon (send a base64 encoded image or something)
+						case "5001":
+							// restore window icon (these operate on a stack)
+						default:
+							assert(0, "" ~ cast(char) esc[1]);
+					}
 				}
 			} else if(esc[0] == '[' && esc.length > 1) {
 				switch(esc[$-1]) {
@@ -943,6 +1240,11 @@ class TerminalEmulator {
 							cursorStyle = CursorStyle.underline;
 						else if(esc == "[6 q")
 							cursorStyle = CursorStyle.bar;
+					break;
+					case 't':
+						// window commands
+						// FIXME
+						// i want to support save/restore title to stack and maybe resizes
 					break;
 					case 'm':
 						argsLoop: foreach(argIdx, arg; getArgs(0))
@@ -1144,12 +1446,12 @@ class TerminalEmulator {
 									mouseButtonTracking = true;
 									mouseButtonReleaseTracking = true;
 								break;
+								// case 1001: // hilight tracking, this is kinda weird so i don't think i want to implement it
 								case 1002:
 									allMouseTrackingOff();
 									mouseButtonTracking = true;
 									mouseButtonReleaseTracking = true;
-									mouseHighlightTracking = true;
-									// motion should only be sent upon release...
+									mouseButtonMotionTracking = true;
 									// use cell motion mouse tracking
 								break;
 								case 1003:
@@ -1171,10 +1473,12 @@ class TerminalEmulator {
 								case 1047:
 								case 47:
 									alternateScreenActive = true;
+									cls();
 								break;
 								case 25:
 									cursorShowing = true;
 								break;
+								/* Extensions */
 								default: assert(0, cast(string) esc);
 							}
 					break;
@@ -1260,6 +1564,16 @@ class TerminalEmulator {
 							ASS[cursorY][cnt + cursorX] = plain;
 						}
 					break;
+					case 'S':
+						auto count = getArgs(1)[0];
+						// scroll up
+						scrollUp(count);
+					break;
+					case 'T':
+						auto count = getArgs(1)[0];
+						// scroll down
+						scrollDown(count);
+					break;
 					case 'P':
 						auto count = getArgs(1)[0];
 						// delete characters
@@ -1329,6 +1643,25 @@ enum TerminalKey : int {
 	PageDown = 0x22, /// .
 }
 
+/* These match simpledisplay.d which match terminal.d, so you can just cast them */
+
+enum MouseEventType : int {
+	motion = 0,
+	buttonPressed = 1,
+	buttonReleased = 2,
+}
+
+enum MouseButton : int {
+	// these names assume a right-handed mouse
+	left = 1,
+	right = 2,
+	middle = 4,
+	wheelUp = 8,
+	wheelDown = 16,
+}
+
+
+
 /*
 mixin template ImageSupport() {
 	import arsd.png;
@@ -1368,7 +1701,9 @@ version(Posix) {
 		if(pid == 0) {
 			import std.process;
 			environment["TERM"] = "xterm"; // we're closest to an xterm, so definitely want to pretend to be one to the child processes
-			environment["TERM_EXTENSIONS"] = "arsd"; // we're closest to an xterm, so definitely want to pretend to be one to the child processes
+			environment["TERM_EXTENSIONS"] = "arsd"; // announce our extensions
+
+			environment["LANG"] = "en_US.UTF-8"; // tell them that utf8 rox (FIXME: what about non-US?)
 
 			import core.sys.posix.unistd;
 
