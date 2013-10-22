@@ -46,6 +46,7 @@ void main(string[] args) {
 		import std.process;
 		environment["TERM"] = "xterm"; // we're closest to an xterm, so definitely want to pretend to be one to the child processes
 		environment["TERM_EXTENSIONS"] = "arsd";
+		environment["LANG"] = "en_US.UTF-8"; // tell them that utf8 rox (FIXME: what about non-US?)
 
 		execl("/bin/bash", "/bin/bash", null);
 	} else {

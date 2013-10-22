@@ -40,7 +40,7 @@ void main(string[] args) {
 		SetConsoleMode(input.inputHandle, 0x80 /*ENABLE_EXTENDED_FLAGS*/ | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT); // disabling processed input so ctrl+c comes through to us
 		terminal._wrapAround = false;
 
-		auto te = new NestedTerminalEmulator(inwritePipe, outreadPipe, &terminal, &input);
+		auto te = new NestedTerminalEmulator(inwritePipe, outreadPipe, &terminal);
 
 		loop: while(true) {
 			if(WaitForSingleObjectEx(input.inputHandle, INFINITE, true) == 0) {
@@ -61,10 +61,62 @@ void main(string[] args) {
 else version(Posix)
 void main(string[] args) {
 	void startup(int master) {
-		auto terminal = Terminal(ConsoleOutputType.cellular);
-		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+		// note that Terminal needs to stay in scope, but it's ok because version doesn't create a new scope
+		version(gnuscreen) {
+			import core.sys.posix.fcntl;
+			int pipe = open("/home/me/fifo", O_WRONLY);
+			assert(pipe >= 0);
+			int pipe2 = open("/home/me/fifo2", O_RDONLY);
+			assert(pipe2 >= 0);
+			auto terminal = Terminal(ConsoleOutputType.cellular, pipe2, pipe, { return [80, 25]; });
+			auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+		} else {
+			auto terminal = Terminal(ConsoleOutputType.cellular);
+			auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+		}
 
-		auto te = new NestedTerminalEmulator(master, &terminal, &input);
+		auto te = new NestedTerminalEmulator(master, &terminal);
+		version(gnuscreen) {
+			input.inputPrefilter = (char c) {
+				if(c == 254) {
+					auto n = input.nextRaw(false);
+					auto n2 = input.nextRaw(false);
+					if(n) {
+						// resize command
+						te.resizeTerminal(n, n2);
+					} else {
+						// redraw command
+						te.changeCursorStyle(te.cursorStyle);
+						te.changeWindowTitle(te.windowTitle);
+						te.changeWindowIcon(te.windowIcon);
+						te.redraw(true);
+					}
+					return input.nextRaw(false);
+				} else
+					return c;
+			};
+		}
+
+		/*
+		version(gnuscreen) {
+			te.useIoctl = false;
+		}
+		*/
+
+		/*
+		import core.sys.posix.unistd;
+		import core.sys.posix.fcntl;
+		int nullRead = open("/dev/pts/13", O_RDONLY);
+		int nullWrite = open("/dev/pts/13", O_WRONLY);
+		assert(nullRead > 0);
+		assert(nullWrite > 0);
+
+		close(0);
+		close(1);
+		dup2(nullRead, 0);
+		dup2(nullWrite, 1);
+		*/
+		//te.detach();
 
 		import arsd.eventloop;
 		addListener(&te.handleEvent);
@@ -80,17 +132,30 @@ void main(string[] args) {
 
 class NestedTerminalEmulator : TerminalEmulator {
 	Terminal* terminal;
-	RealTimeConsoleInput* rtInput;
+	//RealTimeConsoleInput* rtInput;
+
+	version(Posix)
+	void detach() {
+		import core.sys.posix.unistd;
+		if(fork()) {
+			// the parent exits, leaving the parent terminal back to normal
+			static import arsd.eventloop;
+			arsd.eventloop.exit();
+		} else {
+			// while the child kinda floats in limbo
+			//terminal = null;
+		}
+	}
 
 	version(Windows)
 	import core.sys.windows.windows;
 
 	version(Windows)
-	this(HANDLE stdin, HANDLE stdout, Terminal* terminal, RealTimeConsoleInput* rtInput) {
+	this(HANDLE stdin, HANDLE stdout, Terminal* terminal) {
 		this.stdin = stdin;
 		this.stdout = stdout;
 		this.terminal = terminal;
-		this.rtInput = rtInput;
+		//this.rtInput = rtInput;
 
 		super(terminal.width, terminal.height);
 
@@ -106,13 +171,16 @@ class NestedTerminalEmulator : TerminalEmulator {
 	
 
 	version(Posix)
-	this(int master, Terminal* terminal, RealTimeConsoleInput* rtInput) {
+	this(int master, Terminal* terminal) {
 		this.master = master;
 		this.terminal = terminal;
-		this.rtInput = rtInput;
+		//this.rtInput = rtInput;
 		addFileEventListeners(master, &readyToRead, null, null);
 
-		super(terminal.width, terminal.height);
+		if(terminal)
+			super(terminal.width, terminal.height);
+		else
+			super(80, 25);
 	}
 
 	version(Windows)
@@ -166,7 +234,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 				}
 			break;
 			case InputEvent.Type.PasteEvent:
-				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.PasteEvent));
+				auto ev = event.get!(InputEvent.Type.PasteEvent);
+				sendPasteData(ev.pastedText);
 			break;
 			case InputEvent.Type.MouseEvent:
 				auto me = event.get!(InputEvent.Type.MouseEvent);
@@ -184,24 +253,41 @@ class NestedTerminalEmulator : TerminalEmulator {
 		}
 	}
 
+	version(Windows) {
+		protected override void changeWindowIcon(IndexedImage t) {
+			if(t !is null) {
+				// FIXME: i might be able to change this with GetConsoleWindow
+			}
+		}
+
+		protected override void changeIconTitle(string) {} // doesn't matter
+		protected override void changeTextAttributes(TextAttributes) {} // ditto
+		protected override void soundBell() {
+			if(terminal)
+			terminal.writeStringRaw("\007");
+		}
+		protected override void copyToClipboard(string text) {
+			simpledisplay.setClipboardText(simpleWindowConsole, text);
+		}
+		protected override void pasteFromClipboard(void delegate(string) dg) {
+			simpledisplay.getClipboardText(simpleWindowConsole, dg);
+		}
+		protected override void changeCursorStyle(CursorStyle s) {
+
+		}
+	} else {
+		void writeRaw(in char[] s) {
+			if(terminal)
+				terminal.writeStringRaw(s);
+		}
+		mixin ForwardVirtuals!writeRaw;
+	}
 
 	protected override void changeWindowTitle(string t) {
 		if(terminal && t.length)
 			terminal.setTitle(t);
 	}
-	protected override void changeIconTitle(string) {} // doesn't matter
-	protected override void changeTextAttributes(TextAttributes) {} // ditto
-	protected override void soundBell() { }
-	protected override void copyToClipboard(string text) {
-		version(Windows) {
-			simpledisplay.setClipboardText(simpleWindowConsole, text);
-		}
-	}
-	protected override void pasteFromClipboard(void delegate(string) dg) {
-		version(Windows) {
-			simpledisplay.getClipboardText(simpleWindowConsole, dg);
-		}
-	}
+
 	version(Windows) {
 		static import simpledisplay; // this is for copy/paste
 		private simpledisplay.SimpleWindow _simpleWindowConsole;
@@ -223,6 +309,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 	bool lastDrawAlternativeScreen;
 	void redraw(bool forceRedraw = false) {
 		int x, y;
+		if(terminal is null)
+			return;
 
 		terminal.hideCursor();
 
@@ -232,16 +320,21 @@ class NestedTerminalEmulator : TerminalEmulator {
 			}
 			cell.invalidated = false;
 
-			bool insideSelection = idx >= selectionStart && idx < selectionEnd;
+			bool insideSelection;
+			if(selectionEnd > selectionStart)
+				insideSelection = idx >= selectionStart && idx < selectionEnd;
+			else
+				insideSelection = idx >= selectionEnd && idx < selectionStart;
 
-			auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
-			auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
+			//auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
+			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
 
 			ushort tfg, tbg;
 			{
 				import t = terminal;
-				tbg = cell.attributes.backgroundIndex;
-				tfg = cell.attributes.foregroundIndex;
+				// we always work with indexes, so the fallback flag is irrelevant here
+				tbg = cell.attributes.backgroundIndex & ~0x8000;
+				tfg = cell.attributes.foregroundIndex & ~0x8000;
 
 				version(Windows) {
 					ushort b, r;
@@ -280,6 +373,16 @@ class NestedTerminalEmulator : TerminalEmulator {
 					bool reverse = cell.attributes.inverse != reverseVideo; /* != == ^ btw */
 					if(insideSelection)
 						reverse = !reverse;
+
+					// reducing it to 16 color
+					// FIXME: this sucks, it should do something more sane for palette support like findNearestColor()
+					// or even reducing our palette and changing the console palette in Windows for best results
+
+					// and xterm 256 color too can just forward it. and of course if we're nested in ourselves, we can just use
+					// a 24 bit extension command.
+					tfg &= 0xff0f;
+					tbg &= 0xff0f;
+
 					terminal.color(tfg, tbg, ForceOption.automatic, reverse);
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {

@@ -1,4 +1,11 @@
 /**
+	There should be a redraw thing that is given batches of instructions
+	in here that the other thing just implements.
+
+	FIXME: the X thing from vim's tab list goes on the next line improperly
+	FIXME: vim inside screen, the O command doesn't work right
+	FIXME: the save stack stuff should do cursor style too
+
 	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
 
 	You'll have to subclass TerminalEmulator and implement the abstract functions as well as write a drawing function for it.
@@ -41,12 +48,17 @@ class TerminalEmulator {
 	You might be able to stub them out if there's no state maintained on the target, since TerminalEmulator maintains its own internal state */
 	protected abstract void changeWindowTitle(string); /// the title of the window
 	protected abstract void changeIconTitle(string); /// the shorter window/iconified window
+
+	protected abstract void changeWindowIcon(IndexedImage); /// change the window icon. note this may be null
+
+	protected abstract void changeCursorStyle(CursorStyle); /// cursor style
+
 	protected abstract void changeTextAttributes(TextAttributes); /// current text output attributes
 	protected abstract void soundBell(); /// sounds the bell
 	protected abstract void sendToApplication(const(void)[]); /// send some data to the information
 
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
-	protected abstract void pasteFromClipboard(void delegate(string)); /// we pass it a delegate that should accept the data
+	protected abstract void pasteFromClipboard(void delegate(string)); /// requests a paste. we pass it a delegate that should accept the data
 
 	// I believe \033[50~ and up are available for extensions everywhere.
 	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
@@ -67,6 +79,24 @@ class TerminalEmulator {
 	bool dragging;
 	int lastDragX, lastDragY;
 	public bool sendMouseInputToApplication(int termX, int termY, MouseEventType type, MouseButton button, bool shift, bool ctrl) {
+		if(termX < 0)
+			termX = 0;
+		if(termX >= screenWidth)
+			termX = screenWidth - 1;
+		if(termY < 0)
+			termY = 0;
+		if(termY >= screenHeight)
+			termY = screenHeight - 1;
+
+		version(Windows) {
+			// I'm swapping these because my laptop doesn't have a middle button,
+			// and putty swaps them too by default so whatevs.
+			if(button == MouseButton.right)
+				button = MouseButton.middle;
+			else if(button == MouseButton.middle)
+				button = MouseButton.right;
+		}
+
 		int baseEventCode() {
 			int b;
 			// lol the xterm mouse thing sucks like javascript! unbelievable
@@ -124,25 +154,53 @@ class TerminalEmulator {
 
 				if(dragging) {
 					auto idx = termY * screenWidth + termX;
-					if(idx < selectionStart) {
-						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[idx .. selectionStart])
-							cell.invalidated = true;
-						selectionStart = idx;
-					} else if(idx > selectionEnd) {
-						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionEnd .. idx])
-							cell.invalidated = true;
-						selectionEnd = idx;
+
+					// the no-longer-selected portion needs to be invalidated
+					int start, end;
+					if(idx > selectionEnd) {
+						start = selectionEnd;
+						end = idx;
 					} else {
-						foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[idx .. selectionEnd])
-							cell.invalidated = true;
-						selectionEnd = idx;
+						start = idx;
+						end = selectionEnd;
 					}
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end])
+						cell.invalidated = true;
+
+					selectionEnd = idx;
+
+					// and the freshly selected portion needs to be invalidated
+					if(selectionStart > selectionEnd) {
+						start = selectionEnd;
+						end = selectionStart;
+					} else {
+						start = selectionStart;
+						end = selectionEnd;
+					}
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end])
+						cell.invalidated = true;
+
 					return true;
 				}
 			}
 		}
 
 		if(type == MouseEventType.buttonPressed) {
+			// double click detection
+			import std.datetime;
+			static SysTime lastClickTime;
+			static int consecutiveClicks = 1;
+
+			if(button != MouseButton.wheelUp && button != MouseButton.wheelDown) {
+				if(Clock.currTime() - lastClickTime < dur!"msecs"(250))
+					consecutiveClicks++;
+				else
+					consecutiveClicks = 1;
+
+				lastClickTime = Clock.currTime();
+			}
+			// end dbl click
+
 			if(!(shift) && mouseButtonTracking) {
 				int b = baseEventCode;
 
@@ -151,15 +209,7 @@ class TerminalEmulator {
 				x++; y++; // applications expect it to be one-based
 				sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (x + 32) ~ cast(char) (y + 32));
 			} else {
-				version(Windows) {
-					enum pasteButton = MouseButton.right; // my laptop doesn't have a middle mouse button, so i'll use right to paste
-					enum extendButton = MouseButton.middle;
-				} else {
-					enum pasteButton = MouseButton.middle;
-					enum extendButton = MouseButton.right;
-				}
-
-				if(button == pasteButton) {
+				if(button == MouseButton.middle) {
 					pasteFromClipboard(&sendPasteData);
 				}
 
@@ -174,11 +224,30 @@ class TerminalEmulator {
 
 				if(button == MouseButton.left) {
 					// we invalidate the old selection since it should no longer be highlighted...
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionStart .. selectionEnd])
+					makeSelectionOffsetsSane(selectionStart, selectionEnd);
+
+					auto activeScreen = (alternateScreenActive ? &alternateScreen : &normalScreen);
+					foreach(ref cell; (*activeScreen)[selectionStart .. selectionEnd])
 						cell.invalidated = true;
 
-					selectionStart = termY * screenWidth + termX;
-					selectionEnd = selectionStart;
+					if(consecutiveClicks == 1) {
+						selectionStart = termY * screenWidth + termX;
+						selectionEnd = selectionStart;
+					} else if(consecutiveClicks == 2) {
+						selectionStart = termY * screenWidth + termX;
+						selectionEnd = selectionStart;
+						while(selectionStart > 0 && (*activeScreen)[selectionStart-1].ch != ' ') {
+							selectionStart--;
+						}
+
+						while(selectionEnd < (*activeScreen).length && (*activeScreen)[selectionEnd].ch != ' ') {
+							selectionEnd++;
+						}
+
+					} else if(consecutiveClicks == 3) {
+						selectionStart = termY * screenWidth;
+						selectionEnd = selectionStart + screenWidth;
+					}
 					dragging = true;
 					lastDragX = termX;
 					lastDragY = termY;
@@ -189,7 +258,7 @@ class TerminalEmulator {
 
 					return true;
 				}
-				if(button == extendButton) {
+				if(button == MouseButton.right) {
 					auto oldSelectionEnd = selectionEnd;
 					selectionEnd = termY * screenWidth + termX;
 
@@ -333,9 +402,6 @@ class TerminalEmulator {
 	}
 	// FIXME: what about image sections? maybe it is still necessary to loop through them
 
-	bool newlineHack; // not sure what's up with this but it helps get around gnu screen bugs
-		// maybe \n should always just advance, so \r\n is how you go ahead. i don't know though that seems wrong on unix
-
 	/// Style of the cursor
 	enum CursorStyle {
 		block, /// a solid block over the position (like default xterm or many gui replace modes)
@@ -368,11 +434,10 @@ class TerminalEmulator {
 		bool italic; /// .
 		bool strikeout; /// .
 
-		// these are just hacks for the nested emulator and may be removed
-		ushort foregroundIndex;
-		ushort backgroundIndex;
+		// if the high bit here is set, you should use the full Color values if possible, and the value here sans the high bit if not
+		ushort foregroundIndex; /// .
+		ushort backgroundIndex; /// .
 
-		// maybe these should be indexes into the palette...
 		Color foreground; /// .
 		Color background; /// .
 	}
@@ -649,6 +714,8 @@ class TerminalEmulator {
 		resizeTerminal(width, height);
 
 		// update the other thing
+		if(windowTitle.length == 0)
+			windowTitle = "Terminal Emulator";
 		changeWindowTitle(windowTitle);
 		changeIconTitle(iconTitle);
 		changeTextAttributes(currentAttributes);
@@ -747,6 +814,8 @@ class TerminalEmulator {
 
 		TerminalCell overflowCell;
 		overflowCell.ch = '\&raquo;';
+		overflowCell.attributes.backgroundIndex = 3;
+		overflowCell.attributes.foregroundIndex = 0;
 		overflowCell.attributes.foreground = Color(40, 40, 40);
 		overflowCell.attributes.background = Color.yellow;
 
@@ -777,6 +846,9 @@ class TerminalEmulator {
 	}
 
 	public void resizeTerminal(int w, int h) {
+		if(w == screenWidth && h == screenHeight)
+			return; // we're already good, do nothing to avoid wasting time and possibly losing a line (bash doesn't seem to like being told it "resized" to the same size)
+
 		endScrollback(); // FIXME: hack
 
 		screenWidth = w;
@@ -814,6 +886,11 @@ class TerminalEmulator {
 		Color cursorColor;
 		string windowTitle;
 		string iconTitle;
+
+		IndexedImage windowIcon;
+		IndexedImage[] iconStack;
+
+		string[] titleStack;
 
 		bool bracketedPasteMode;
 		bool mouseButtonTracking;
@@ -1029,7 +1106,7 @@ class TerminalEmulator {
 			}
 			// FIXME: the wraparoundMode seems to help gnu screen but then it doesn't go away properly and that messes up bash...
 			//if(wraparoundMode && cursorX == screenWidth - 1) {
-			if((!newlineHack) && cursorX == screenWidth - 1) {
+			if(cursorX == screenWidth - 1) {
 				// FIXME: should this check the scrolling zone instead?
 				newLineOnNext = true;
 
@@ -1124,6 +1201,19 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// echo -e "\033]52;p;?\007"
 							// the p == primary
 							// the data after it is either base64 stuff to copy or ? to request a paste
+
+							if(arg == "p;?") {
+								// i'm using this to request a paste. not quite compatible with xterm, but kinda
+								// because xterm tends not to answer anyway.
+								pasteFromClipboard(&sendPasteData);
+							} else if(arg.length > 2 && arg[0 .. 2] == "p;") {
+								auto info = arg[2 .. $];
+								try {
+									import std.base64;
+									auto data = Base64.decode(info);
+									copyToClipboard(cast(string) data);
+								} catch(Exception e)  {}
+							}
 						break;
 						case "4":
 							// palette change or query
@@ -1145,8 +1235,31 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						/* Extensions */
 						case "5000":
 							// change window icon (send a base64 encoded image or something)
-						case "5001":
-							// restore window icon (these operate on a stack)
+							/*
+								The format here is width and height as a single char each
+									'0'-'9' == 0-9
+									'a'-'z' == 10 - 36
+									anything else is invalid
+								
+								then a palette in hex rgba format (8 chars each), up to 26 entries
+
+								then a capital Z
+
+								if a palette entry == 'P', it means pull from the current palette (FIXME not implemented)
+
+								then 256 characters between a-z (must be lowercase!) which are the palette entries for
+								the pixels, top to bottom, left to right, so the image is 16x16. if it ends early, the
+								rest of the data is assumed to be zero
+
+								you can also do e.g. 22a, which means repeat a 22 times for some RLE.
+
+								anything out of range aborts the operation
+							*/
+
+							auto img = readSmallTextImage(arg);
+							windowIcon = img;
+							changeWindowIcon(img);
+						break;
 						default:
 							assert(0, "" ~ cast(char) esc[1]);
 					}
@@ -1240,11 +1353,33 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							cursorStyle = CursorStyle.underline;
 						else if(esc == "[6 q")
 							cursorStyle = CursorStyle.bar;
+
+						changeCursorStyle(cursorStyle);
 					break;
 					case 't':
 						// window commands
-						// FIXME
-						// i want to support save/restore title to stack and maybe resizes
+						// i might support more of these but for now i just want the stack stuff.
+
+						auto args = getArgs(0, 0);
+						if(args[0] == 22) {
+							// save window title to stack
+							// xterm says args[1] should tell if it is the window title, the icon title, or both, but meh
+							titleStack ~= windowTitle;
+							iconStack ~= windowIcon;
+						} else if(args[0] == 23) {
+							// restore from stack
+							if(titleStack.length) {
+								windowTitle = titleStack[$ - 1];
+								changeWindowTitle(titleStack[$ - 1]);
+								titleStack = titleStack[0 .. $ - 1];
+							}
+
+							if(iconStack.length) {
+								windowIcon = iconStack[$ - 1];
+								changeWindowIcon(iconStack[$ - 1]);
+								iconStack = iconStack[0 .. $ - 1];
+							}
+						}
 					break;
 					case 'm':
 						argsLoop: foreach(argIdx, arg; getArgs(0))
@@ -1304,9 +1439,13 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								if(args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
 									currentAttributes.foreground = Color(args[1], args[2], args[3]);
+									// and try to find a low default palette entry for maximum compatibility
+									// 0x8000 == approximation
+									currentAttributes.foregroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 16], currentAttributes.foreground);
 								} else if(args[0] == 5) {
 									// set to palette index
 									currentAttributes.foreground = palette[args[1]];
+									currentAttributes.foregroundIndex = cast(ushort) args[1];
 								}
 								break argsLoop;
 							case 39:
@@ -1338,10 +1477,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								if(args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
 									currentAttributes.background = Color(args[1], args[2], args[3]);
+
+									// and try to find a low default palette entry for maximum compatibility
+									// 0x8000 == this is an approximation
+									currentAttributes.backgroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 8], currentAttributes.background);
 								} else if(args[0] == 5) {
 									// set to palette index
 									currentAttributes.background = palette[args[1]];
+									currentAttributes.backgroundIndex = cast(ushort) args[1];
 								}
+
 								break argsLoop;
 							case 49:
 							// default background color
@@ -1490,7 +1635,6 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 4:
 								// insert mode
 								// I think this has to change the newline function
-								newlineHack = true;
 							break;
 							case 34:
 								// no idea. vim inside screen sends it
@@ -1897,6 +2041,57 @@ version(Windows) {
 	}
 }
 
+/// Implementation of TerminalEmulator's abstract functions that forward them to output
+mixin template ForwardVirtuals(alias writer) {
+	static import arsd.color;
+
+	protected override void changeCursorStyle(CursorStyle style) {
+		// FIXME: this should probably just import utility
+		final switch(style) {
+			case TerminalEmulator.CursorStyle.block:
+				writer("\033[2 q");
+			break;
+			case TerminalEmulator.CursorStyle.underline:
+				writer("\033[4 q");
+			break;
+			case TerminalEmulator.CursorStyle.bar:
+				writer("\033[6 q");
+			break;
+		}
+	}
+
+	protected override void changeWindowTitle(string t) {
+		if(t.length)
+			writer("\033]0;"~t~"\007");
+	}
+
+	protected override void changeWindowIcon(arsd.color.IndexedImage t) {
+		if(t !is null) {
+			// forward it via our extension. xterm and such seems to ignore this so we should be ok just sending
+			writer("\033]5000;" ~ encodeSmallTextImage(t) ~ "\007");
+		}
+	}
+
+	protected override void changeIconTitle(string) {} // FIXME
+	protected override void changeTextAttributes(TextAttributes) {} // FIXME
+	protected override void soundBell() {
+		writer("\007");
+	}
+	protected override void copyToClipboard(string text) {
+		// this is xterm compatible, though xterm rarely implements it
+		import std.base64;
+				// idk why the cast is needed here
+		writer("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
+	}
+	protected override void pasteFromClipboard(void delegate(string) dg) {
+		// this is a slight extension. xterm invented the string - it means request the primary selection -
+		// but it generally doesn't actually get a reply. so i'm using it to request the primary which will be
+		// sent as a pasted strong.
+		// (xterm prolly doesn't do it by default because it is potentially insecure, letting a naughty app steal your clipboard data, but meh, any X application can do that too and it is useful here for nesting.)
+		writer("\033]52;p;?\007");
+	}
+}
+
 /// you can pass this as PtySupport's arguments when you just don't care
 final void doNothing() {}
 
@@ -1912,20 +2107,28 @@ mixin template PtySupport(alias resizeHelper) {
 		int master;
 	}
 
+	// for resizing...
+	version(Windows)
+		enum bool useIoctl = false;
+	version(Posix)
+		bool useIoctl = true;
+
 
 	override void resizeTerminal(int w, int h) {
 		resizeHelper();
 
 		super.resizeTerminal(w, h);
 
-		version(Posix) {
-			import core.sys.posix.termios;
-			winsize win;
-			win.ws_col = cast(ushort) w;
-			win.ws_row = cast(ushort) h;
+		if(useIoctl) {
+			version(Posix) {
+				import core.sys.posix.termios;
+				winsize win;
+				win.ws_col = cast(ushort) w;
+				win.ws_row = cast(ushort) h;
 
-			import core.sys.posix.sys.ioctl;
-			ioctl(master, TIOCSWINSZ, &win);
+				import core.sys.posix.sys.ioctl;
+				ioctl(master, TIOCSWINSZ, &win);
+			} else assert(0);
 		} else {
 			// this is a special command that my serverside program understands- it will be interpreted as nonsense if you don't run serverside...
 			sendToApplication(cast(ubyte[]) [cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
@@ -1995,6 +2198,151 @@ mixin template PtySupport(alias resizeHelper) {
 			redraw();
 		}
 	}
+}
+
+string encodeSmallTextImage(IndexedImage ii) {
+	char encodeNumeric(int c) {
+		if(c < 10)
+			return cast(char)(c + '0');
+		if(c < 10 + 26)
+			return cast(char)(c - 10 + 'a');
+		assert(0);
+	}
+
+	string s;
+	s ~= encodeNumeric(ii.width);
+	s ~= encodeNumeric(ii.height);
+
+	foreach(entry; ii.palette)
+		s ~= entry.toRgbaHexString();
+	s ~= "Z";
+
+	ubyte rleByte;
+	int rleCount;
+
+	void rleCommit() {
+		if(rleByte >= 26)
+			assert(0); // too many colors for us to handle
+		if(rleCount == 0)
+			goto finish;
+		if(rleCount == 1) {
+			s ~= rleByte + 'a';
+			goto finish;
+		}
+
+		import std.conv;
+		s ~= to!string(rleCount);
+		s ~= rleByte + 'a';
+
+		finish:
+			rleByte = 0;
+			rleCount = 0;
+	}
+
+	foreach(b; ii.data) {
+		if(b == rleByte)
+			rleCount++;
+		else {
+			rleCommit();
+			rleByte = b;
+			rleCount = 1;
+		}
+	}
+
+	rleCommit();
+
+	return s;
+}
+
+IndexedImage readSmallTextImage(string arg) {
+	auto origArg = arg;
+	int width;
+	int height;
+
+	int readNumeric(char c) {
+		if(c >= '0' && c <= '9')
+			return c - '0';
+		if(c >= 'a' && c <= 'z')
+			return c - 'a' + 10;
+		return 0;
+	}
+
+	if(arg.length > 2) {
+		width = readNumeric(arg[0]);
+		height = readNumeric(arg[1]);
+		arg = arg[2 .. $];
+	}
+
+	import std.conv;
+	assert(width == 16, to!string(width));
+	assert(height == 16, to!string(width));
+
+	Color[] palette;
+	ubyte[256] data;
+	int didx = 0;
+	bool readingPalette = true;
+	outer: while(arg.length) {
+		if(readingPalette) {
+			if(arg[0] == 'Z') {
+				readingPalette = false;
+				continue;
+			}
+			if(arg.length < 8)
+				break;
+			foreach(a; arg[0..8]) {
+				// if not strict hex, forget it
+				if(!((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')))
+					break outer;
+			}
+			palette ~= Color.fromString(arg[0 .. 8]);
+			arg = arg[8 .. $];
+		} else {
+			char[3] rleChars;
+			int rlePos;
+			while(arg.length && arg[0] >= '0' && arg[0] <= '9') {
+				rleChars[rlePos] = arg[0];
+				arg = arg[1 .. $];
+				rlePos++;
+				if(rlePos >= rleChars.length)
+					break;
+			}
+			if(arg.length == 0)
+				break;
+
+			int rle;
+			if(rlePos == 0)
+				rle = 1;
+			else {
+				// 100
+				// rleChars[0] == '1'
+				foreach(c; rleChars[0 .. rlePos]) {
+					rle *= 10;
+					rle += c - '0';
+				}
+			}
+
+			foreach(i; 0 .. rle) {
+				if(arg[0] >= 'a' && arg[0] <= 'z')
+					data[didx] = cast(ubyte)(arg[0] - 'a');
+
+				didx++;
+				if(didx == data.length)
+					break outer;
+			}
+
+			arg = arg[1 .. $];
+		}
+	}
+
+	// width, height, palette, data is set up now
+
+	if(palette.length) {
+		auto ii = new IndexedImage(width, height);
+		ii.palette = palette;
+		ii.data = data.dup;
+		return ii;
+	}// else assert(0, origArg);
+	return null;
 }
 
 

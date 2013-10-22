@@ -444,9 +444,15 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		return bi;
 	}
 
+	protected override void changeCursorStyle(CursorStyle s) { }
+
 	protected override void changeWindowTitle(string t) {
 		if(window && t.length)
 			window.title = t;
+	}
+	protected override void changeWindowIcon(IndexedImage t) {
+		if(window && t)
+			window.icon = t;
 	}
 	protected override void changeIconTitle(string) {}
 	protected override void changeTextAttributes(TextAttributes) {}
@@ -718,7 +724,11 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
-			bool insideSelection = idx >= selectionStart && idx < selectionEnd;
+			bool insideSelection;
+			if(selectionEnd > selectionStart)
+				insideSelection = idx >= selectionStart && idx < selectionEnd;
+			else
+				insideSelection = idx >= selectionEnd && idx < selectionStart;
 
 				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
 				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
@@ -733,11 +743,25 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				if(insideSelection)
 					reverse = !reverse;
 
-				painter.fillColor = reverse ? cell.attributes.foreground : cell.attributes.background;
-				painter.outlineColor = reverse ? cell.attributes.foreground : cell.attributes.background;
-				painter.drawRectangle(Point(posx, posy), fontWidth - 1, fontHeight - 1);
-				painter.fillColor = Color.transparent;
-				painter.outlineColor = reverse ? cell.attributes.background : cell.attributes.foreground;
+				{
+					auto fgc = cell.attributes.foreground;
+					auto bgc = cell.attributes.background;
+
+					if(!(cell.attributes.foregroundIndex & 0xff00)) {
+						// this refers to a specific palette entry, which may change, so we should use that
+						fgc = palette[cell.attributes.foregroundIndex];
+					}
+					if(!(cell.attributes.backgroundIndex & 0xff00)) {
+						// this refers to a specific palette entry, which may change, so we should use that
+						bgc = palette[cell.attributes.backgroundIndex];
+					}
+
+					painter.fillColor = reverse ? fgc : bgc;
+					painter.outlineColor = reverse ? fgc : bgc;
+					painter.drawRectangle(Point(posx, posy), fontWidth - 1, fontHeight - 1);
+					painter.fillColor = Color.transparent;
+					painter.outlineColor = reverse ? bgc : fgc;
+				}
 
 				if(cell.ch != dchar.init) {
 					char[4] str;
@@ -757,7 +781,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				}
 
 				if(cell.attributes.underlined)
-					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth, posy + fontHeight - 1));
+					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth - 1, posy + fontHeight - 1));
 			skipDrawing:
 
 				posx += fontWidth;

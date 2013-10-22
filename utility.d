@@ -15,14 +15,33 @@
 module arsd.terminalextensions;
 
 import terminal; // for sending the commands
-import arsd.terminalemulator; // for the various enums (seems silly to pull the whole module just for some magic numbers though :( )
+import arsd.terminalemulator; // for the various enums and small image encoding functions
 import ac = arsd.color;
+
+export void changeWindowIcon(Terminal* t, string filename) {
+	import arsd.png;
+	auto image = readPng(filename);
+	auto ii = cast(IndexedImage) image;
+	assert(ii !is null);
+
+	/*
+	foreach(idx, b; ii.data) {
+		auto c = ii.palette[b];
+		changeBackgroundColor(t, c);
+		t.write(" ");
+
+		if(idx % 16 == 0) {
+			t.color(terminal.Color.DEFAULT, terminal.Color.DEFAULT, ForceOption.alwaysSend);
+			t.writeln();
+		}
+	}*/
+
+	t.writeStringRaw("\033]5000;"~encodeSmallTextImage(ii)~"\007");
+}
 
 export void changeForegroundColor(Terminal* t, ac.Color c) {
 	import std.string;
-	t.writeln("hey ", c);
 	t.writeStringRaw(format("\033[38;2;%d;%d;%dm", c.r, c.g, c.b));
-	t.writeln("yo!");
 }
 
 export void changeBackgroundColor(Terminal* t, ac.Color c) {
