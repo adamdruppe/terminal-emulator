@@ -53,12 +53,43 @@ void main(string[] args) {
 	import std.process;
 	ChildTerminal[] children;
 
-	Socket connectTo(string sname) {
+	Socket connectTo(string sname, bool spawn = true) {
 		auto socket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
 		try {
 			socket.connect(new UnixAddress(environment["HOME"] ~ "/.detachable-terminals/" ~ sname));
 		} catch(Exception e) {
 			socket = null;
+
+			if(spawn) {
+				import core.sys.posix.unistd;
+				if(auto pid = fork()) {
+					import core.sys.posix.sys.wait;
+					int status;
+					//waitpid(pid, &status, 0); // let the other one initialize...
+						import core.thread;
+						Thread.sleep(dur!"msecs"(250)); // give the child a chance to get started...
+					auto newSocket = connectTo(sname, false);
+					if(newSocket is null)
+						sname = "[failed]";
+
+					socket = newSocket;
+				} else {
+					// child
+
+					import core.sys.posix.fcntl;
+					auto n = open("/dev/null", O_RDONLY);
+					auto n2 = open("/dev/null", O_WRONLY);
+					assert(n >= 0);
+					import core.stdc.errno;
+					assert(n2 >= 0, to!string(errno));
+					dup2(n, 0);
+					dup2(n2, 1);
+
+					auto proggie = "/home/me/program/terminal-emulator/detachable";
+					if(execl(proggie.ptr, proggie.ptr, (sname ~ "\0").ptr, 0))
+						throw new Exception("wtf " ~ to!string(errno));
+				}
+			}
 		}
 		return socket;
 	}
@@ -262,33 +293,10 @@ void main(string[] args) {
 							string sname = "anonymous-" ~ to!string(time(null));
 							// spin off the child process
 
-							if(auto pid = fork()) {
-								import core.sys.posix.sys.wait;
-								int status;
-								//waitpid(pid, &status, 0); // let the other one initialize...
-									import core.thread;
-									Thread.sleep(dur!"msecs"(250)); // give the child a chance to get started...
-								auto newSocket = connectTo(sname);
-								if(newSocket is null)
-									sname = "[failed]";
-
+							auto newSocket = connectTo(sname);
+							if(newSocket) {
 								children[position] = ChildTerminal(newSocket, sname, sname);
 								setActiveScreen(position);
-							} else {
-								// child
-
-								import core.sys.posix.fcntl;
-								auto n = open("/dev/null", O_RDONLY);
-								auto n2 = open("/dev/null", O_WRONLY);
-								assert(n >= 0);
-								import core.stdc.errno;
-								assert(n2 >= 0, to!string(errno));
-								dup2(n, 0);
-								dup2(n2, 1);
-
-								auto proggie = "/home/me/program/terminal-emulator/detachable";
-								if(execl(proggie.ptr, proggie.ptr, (sname ~ "\0").ptr, 0))
-									throw new Exception("wtf " ~ to!string(errno));
 							}
 						break;
 						case '0':

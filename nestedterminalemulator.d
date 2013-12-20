@@ -1,3 +1,7 @@
+// to compile the magic d demangler:
+// dmd nestedterminalemulator.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop -version=d_demangle
+
+
 /**
 	This application does our terminal emulation inside another terminal, or the
 	Windows console.
@@ -302,6 +306,30 @@ class NestedTerminalEmulator : TerminalEmulator {
 
 	bool debugMode;
 	mixin PtySupport!(doNothing);
+
+	version(d_demangle) {
+		void readyToRead(int fd) {
+			import core.sys.posix.unistd;
+			ubyte[4096] buffer;
+			int len = read(fd, buffer.ptr, 4096);
+			if(len < 0)
+				throw new Exception("read failed");
+
+			auto data = buffer[0 .. len];
+
+			import std.regex;
+			char[] dem(Captures!(char[], uint) m) {
+				import core.demangle;
+				return "\033[1m" ~ demangle(m.hit) ~ "\033[22m";
+			}
+			data = cast(typeof(data)) replace!dem(cast(char[]) data, regex("_D[a-zA-Z0-9_]+", "g"));
+
+			super.sendRawInput(data);
+
+			redraw();
+		}
+	}
+
 
 	version(Posix)
 	import arsd.eventloop;
