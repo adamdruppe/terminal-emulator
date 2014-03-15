@@ -527,12 +527,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			}
 		}
 
-		this.screenWidth = 80;
-		this.screenHeight = 24;
+		auto desiredWidth = 80;
+		auto desiredHeight = 24;
 
 		window = new SimpleWindow(
-			fontWidth * this.screenWidth + paddingLeft * 2,
-			fontHeight * this.screenHeight + paddingTop * 2,
+			fontWidth * desiredWidth + paddingLeft * 2,
+			fontHeight * desiredHeight + paddingTop * 2,
 			"Terminal Emulator",
 			OpenGlOptions.no,
 			Resizablity.allowResizing);
@@ -548,7 +548,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			redraw();
 		};
 
-		super(80, 24);
+		super(desiredWidth, desiredHeight);
 
 		bool skipNextChar = false;
 
@@ -724,6 +724,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
+			{
 			bool insideSelection;
 			if(selectionEnd > selectionStart)
 				insideSelection = idx >= selectionStart && idx < selectionEnd;
@@ -738,12 +739,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
 
 				// FIXME: this could be more efficient, simpledisplay could get better graphics context handling
-
-				bool reverse = (cell.attributes.inverse != reverseVideo);
-				if(insideSelection)
-					reverse = !reverse;
-
 				{
+
+					bool reverse = (cell.attributes.inverse != reverseVideo);
+					if(insideSelection)
+						reverse = !reverse;
+
 					auto fgc = cell.attributes.foreground;
 					auto bgc = cell.attributes.background;
 
@@ -762,6 +763,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					painter.fillColor = Color.transparent;
 					painter.outlineColor = reverse ? bgc : fgc;
 				}
+			}
 
 				if(cell.ch != dchar.init) {
 					char[4] str;

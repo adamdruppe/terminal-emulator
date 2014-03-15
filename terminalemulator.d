@@ -2121,12 +2121,11 @@ mixin template PtySupport(alias resizeHelper) {
 
 		if(useIoctl) {
 			version(Posix) {
-				import core.sys.posix.termios;
+				import core.sys.posix.sys.ioctl;
 				winsize win;
 				win.ws_col = cast(ushort) w;
 				win.ws_row = cast(ushort) h;
 
-				import core.sys.posix.sys.ioctl;
 				ioctl(master, TIOCSWINSZ, &win);
 			} else assert(0);
 		} else {
