@@ -68,6 +68,13 @@ export void changeCurrentCursor(Terminal* t, TerminalEmulator.CursorStyle style)
 	}
 }
 
+export void displayImage(Terminal* t, string filename) {
+	t.writeStringRaw("\000");
+	import std.base64, std.file;
+	t.writeStringRaw(Base64.encode(cast(ubyte[]) std.file.read(filename)));
+	t.writeStringRaw("\000");
+}
+
 // intended for things like attaching screen
 export void clearScrollbackHistory(Terminal* t) {
 

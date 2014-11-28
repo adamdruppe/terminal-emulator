@@ -343,12 +343,13 @@ class NestedTerminalEmulator : TerminalEmulator {
 		terminal.hideCursor();
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+			ushort tfg, tbg;
+			bool insideSelection;
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
 
-			bool insideSelection;
 			if(selectionEnd > selectionStart)
 				insideSelection = idx >= selectionStart && idx < selectionEnd;
 			else
@@ -357,7 +358,6 @@ class NestedTerminalEmulator : TerminalEmulator {
 			//auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
 			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
 
-			ushort tfg, tbg;
 			{
 				import t = terminal;
 				// we always work with indexes, so the fallback flag is irrelevant here

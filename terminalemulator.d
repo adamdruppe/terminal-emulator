@@ -164,8 +164,10 @@ class TerminalEmulator {
 						start = idx;
 						end = selectionEnd;
 					}
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end])
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end]) {
 						cell.invalidated = true;
+						cell.selected = false;
+					}
 
 					selectionEnd = idx;
 
@@ -177,8 +179,10 @@ class TerminalEmulator {
 						start = selectionStart;
 						end = selectionEnd;
 					}
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end])
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end]) {
 						cell.invalidated = true;
+						cell.selected = true;
+					}
 
 					return true;
 				}
@@ -227,8 +231,10 @@ class TerminalEmulator {
 					makeSelectionOffsetsSane(selectionStart, selectionEnd);
 
 					auto activeScreen = (alternateScreenActive ? &alternateScreen : &normalScreen);
-					foreach(ref cell; (*activeScreen)[selectionStart .. selectionEnd])
+					foreach(ref cell; (*activeScreen)[selectionStart .. selectionEnd]) {
 						cell.invalidated = true;
+						cell.selected = false;
+					}
 
 					if(consecutiveClicks == 1) {
 						selectionStart = termY * screenWidth + termX;
@@ -253,8 +259,10 @@ class TerminalEmulator {
 					lastDragY = termY;
 
 					// then invalidate the new selection as well since it should be highlighted
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionStart .. selectionEnd])
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[selectionStart .. selectionEnd]) {
 						cell.invalidated = true;
+						cell.selected = true;
+					}
 
 					return true;
 				}
@@ -268,8 +276,10 @@ class TerminalEmulator {
 						oldSelectionEnd = tmp;
 					}
 
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[oldSelectionEnd .. selectionEnd])
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[oldSelectionEnd .. selectionEnd]) {
 						cell.invalidated = true;
+						cell.selected = true;
+					}
 
 					auto text = getPlainText(selectionStart, selectionEnd);
 					if(text.length) {
@@ -283,8 +293,8 @@ class TerminalEmulator {
 		return false;
 	}
 
-	int selectionStart; // an offset into the screen buffer
-	int selectionEnd; // ditto
+	private int selectionStart; // an offset into the screen buffer
+	private int selectionEnd; // ditto
 
 	/// Send a non-character key sequence
 	public bool sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
@@ -416,8 +426,8 @@ class TerminalEmulator {
 		ta.foregroundIndex = 256; // terminal.d uses this as Color.DEFAULT
 		ta.backgroundIndex = 256;
 
-		ta.foreground = Color.black;
-		ta.background = Color.white;
+		ta.foreground = Color.white; // Color.black;
+		ta.background = Color.black; // Color.white;
 		return ta;
 	}
 
@@ -449,6 +459,7 @@ class TerminalEmulator {
 
 		TextAttributes attributes; /// color, etc.
 		bool invalidated = true; /// if it needs to be redrawn
+		bool selected = false; /// if it is currently selected by the user (for being copied to the clipboard)
 	}
 
 	/// Cursor position, zero based. (0,0) == upper left. (0, 1) == second row, first column.
@@ -589,7 +600,7 @@ class TerminalEmulator {
 							addOutput(rep[0]);
 							rep = rep[1 .. $];
 						}
-						addOutput(10);
+						newLine(true);
 					}
 				}
 
@@ -616,7 +627,7 @@ class TerminalEmulator {
 					// reverse index
 					esc = null;
 					readingEsc = false;
-					if(cursorY == 0)
+					if(cursorY <= scrollZoneTop)
 						scrollDown();
 					else
 						cursorY = cursorY - 1;
@@ -709,7 +720,7 @@ class TerminalEmulator {
 		currentAttributes = defaultTextAttributes();
 		cursorColor = Color.white;
 
-		palette = xtermPalette();
+		palette[] = xtermPalette[];
 
 		resizeTerminal(width, height);
 
@@ -1051,6 +1062,7 @@ class TerminalEmulator {
 			}
 		}
 
+		bool insertMode = false;
 		void newLine(bool commitScrollback) {
 			if(!alternateScreenActive && commitScrollback) {
 				scrollbackBuffer ~= currentScrollbackLine.dup;
@@ -1059,7 +1071,7 @@ class TerminalEmulator {
 			}
 
 			cursorX = 0;
-			if(scrollingEnabled && cursorY == scrollZoneBottom) {
+			if(scrollingEnabled && cursorY >= scrollZoneBottom) {
 				size_t idx = scrollZoneTop * screenWidth;
 				foreach(l; scrollZoneTop .. scrollZoneBottom)
 				foreach(i; 0 .. screenWidth) {
@@ -1085,7 +1097,10 @@ class TerminalEmulator {
 					idx++;
 				}
 			} else {
-				cursorY = cursorY + 1;
+				if(insertMode)
+					scrollDown();
+				else
+					cursorY = cursorY + 1;
 			}
 		}
 
@@ -1266,6 +1281,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 				}
 			} else if(esc[0] == '[' && esc.length > 1) {
 				switch(esc[$-1]) {
+					case 'n':
+						switch(esc[$-2]) {
+							import std.string;
+							// request status report, reply OK
+							case '5': sendToApplication("\033[0n"); break;
+							// request cursor position
+							case '6': sendToApplication(format("\033[%d;%dR", cursorY + 1, cursorX + 1)); break;
+							default: assert(0, cast(string) esc);
+						}
+					break;
 					case 'A': if(cursorY) cursorY = cursorY - getArgs(1)[0]; break;
 					case 'B': if(cursorY != this.screenHeight - 1) cursorY = cursorY + getArgs(1)[0]; break;
 					case 'D': if(cursorX) cursorX = cursorX - getArgs(1)[0]; break;
@@ -1280,6 +1305,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						auto got = getArgs(1, 1);
 						cursorX = got[1] - 1;
 						cursorY = got[0] - 1;
+						newLineOnNext = false;
 					break;
 					case 'L':
 						// insert lines
@@ -1538,6 +1564,9 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						if(esc[1] != '?')
 						foreach(arg; getArgs())
 						switch(arg) {
+							case 4:
+								insertMode = true;
+							break;
 							case 34:
 								// no idea. vim inside screen sends it
 							break;
@@ -1633,8 +1662,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						foreach(arg; getArgs())
 						switch(arg) {
 							case 4:
-								// insert mode
-								// I think this has to change the newline function
+								insertMode = false;
 							break;
 							case 34:
 								// no idea. vim inside screen sends it
@@ -1825,7 +1853,7 @@ version(Posix) {
 		import core.sys.posix.termios;
 		import core.sys.posix.signal;
 		__gshared static int childrenAlive = 0;
-		extern(C) nothrow static
+		extern(C) nothrow static @nogc
 		void childdead(int) {
 			childrenAlive--;
 
@@ -2190,6 +2218,7 @@ mixin template PtySupport(alias resizeHelper) {
 					replace(cast(string) data, "\033", "\\")
 					.replace("\010", "^H")
 					.replace("\r", "^M")
+					.replace("\n", "^J")
 					);
 			}
 			super.sendRawInput(data);
@@ -2346,7 +2375,7 @@ IndexedImage readSmallTextImage(string arg) {
 
 
 // workaround dmd bug fixed in next release
-// static immutable Color[256] xtermPalette = [
+//static immutable Color[256] xtermPalette = [
 Color[] xtermPalette() { return [
 	Color(0, 0, 0),
 	Color(0xcd, 0, 0),

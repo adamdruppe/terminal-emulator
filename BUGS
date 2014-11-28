@@ -1,0 +1,15 @@
+Page up and page down don't work on my newfangled Linux console.
+
+The gui version is slow when scrolling full screen. Inefficient drawing surely.
+The trick from the Windows version of the nested one should help a lot.
+
+underlining is ugly
+
+sometimes scrolling up or opening lines in vim doesn't work right
+
+
+If any part of the selection changes, the whole selected text ought to become unselected. (It may remain on the clipboard though.)
+
+
+FEATURE REQUESTS:
+	rectangular selection

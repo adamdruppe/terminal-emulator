@@ -127,7 +127,16 @@ void main(string[] args) {
 		loop();
 	}
 
-	startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
+	try {
+		startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
+	} catch(Throwable t) {
+		// we might not be run from a tty to print the message, so pop it up some other way.
+		// I'm lazy so i'll just call xmessage. good enough to pop it up in the gui environment
+		import std.process;
+		auto pipes = pipeShell("xmessage -file -");
+		pipes.stdin.write(t.toString());
+		pipes.stdin.close();
+	}
 }
 
 import simpledisplay;
@@ -682,12 +691,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	Image img;
 
 
-	bool clearScreenRequested;
+	bool clearScreenRequested = true;
 	void redraw(bool forceRedraw = false) {
 		auto painter = window.draw();
 		if(clearScreenRequested) {
-			painter.outlineColor = Color.white;
-			painter.fillColor = Color.white;
+			auto clearColor = defaultTextAttributes.background;
+			painter.outlineColor = clearColor;
+			painter.fillColor = clearColor;
 			painter.drawRectangle(Point(0, 0), window.width, window.height);
 			clearScreenRequested = false;
 		}
@@ -725,11 +735,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			}
 			cell.invalidated = false;
 			{
-			bool insideSelection;
-			if(selectionEnd > selectionStart)
-				insideSelection = idx >= selectionStart && idx < selectionEnd;
-			else
-				insideSelection = idx >= selectionEnd && idx < selectionStart;
 
 				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
 				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
@@ -742,7 +747,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				{
 
 					bool reverse = (cell.attributes.inverse != reverseVideo);
-					if(insideSelection)
+					if(cell.selected)
 						reverse = !reverse;
 
 					auto fgc = cell.attributes.foreground;
