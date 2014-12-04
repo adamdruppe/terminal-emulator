@@ -65,48 +65,11 @@ void main(string[] args) {
 else version(Posix)
 void main(string[] args) {
 	void startup(int master) {
-		// note that Terminal needs to stay in scope, but it's ok because version doesn't create a new scope
-		version(gnuscreen) {
-			import core.sys.posix.fcntl;
-			int pipe = open("/home/me/fifo", O_WRONLY);
-			assert(pipe >= 0);
-			int pipe2 = open("/home/me/fifo2", O_RDONLY);
-			assert(pipe2 >= 0);
-			auto terminal = Terminal(ConsoleOutputType.cellular, pipe2, pipe, { return [80, 25]; });
-			auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
-		} else {
-			auto terminal = Terminal(ConsoleOutputType.cellular);
-			auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
-			terminal._wrapAround = false;
-		}
+		auto terminal = Terminal(ConsoleOutputType.cellular);
+		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+		terminal._wrapAround = false;
 
 		auto te = new NestedTerminalEmulator(master, &terminal);
-		version(gnuscreen) {
-			input.inputPrefilter = (char c) {
-				if(c == 254) {
-					auto n = input.nextRaw(false);
-					auto n2 = input.nextRaw(false);
-					if(n) {
-						// resize command
-						te.resizeTerminal(n, n2);
-					} else {
-						// redraw command
-						te.changeCursorStyle(te.cursorStyle);
-						te.changeWindowTitle(te.windowTitle);
-						te.changeWindowIcon(te.windowIcon);
-						te.redraw(true);
-					}
-					return input.nextRaw(false);
-				} else
-					return c;
-			};
-		}
-
-		/*
-		version(gnuscreen) {
-			te.useIoctl = false;
-		}
-		*/
 
 		/*
 		import core.sys.posix.unistd;

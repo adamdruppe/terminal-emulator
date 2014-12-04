@@ -60,11 +60,28 @@ import arsd.eventloop;
 
 import std.socket;
 
-void main(string[] args) {
+extern(C)
+void detachable_terminal_sigint_handler(int sigNumber) nothrow @nogc {
+	import arsd.eventloop;
+	try { exit(); }
+	catch(Exception e) {
+		import core.sys.posix.signal;
+		signal(SIGINT, SIG_DFL);
+	}
+}
+
+version(standalone_detachable)
+void main(string[] args) { detachableMain(args); }
+
+void detachableMain(string[] args) {
 	string sname;
 	if(args.length > 1) {
 		sname = args[1];
 	}
+
+	//signal(SIGPIPE, SIG_IGN);
+	import core.sys.posix.signal;
+	signal(SIGINT, &detachable_terminal_sigint_handler);
 
 	void startup(int master) {
 		if(sname.length == 0) {

@@ -7,6 +7,18 @@ import terminal;
 // dmd attach.d message.d ~/arsd/terminal.d ~/d/dmd2/src/phobos/std/socket.d
 
 /*
+	FIXME: make rebindable escape character
+
+	Working with sessions:
+	attach -S foo # opens a session called foo
+
+	A session is a collection of screens. Any new screens created here will be added to the session.
+
+	or maybe C-a c means create temporary.
+	C-a C means create permanent. Permanent screens get a proper name and are added to the session.
+*/
+
+/*
 	The attach program should provide the UI and other stuff.
 	So if you attach to two things at once, this will ignore the inactive
 	sockets and when you switch to one, it requests a redraw from the new one
@@ -68,6 +80,7 @@ void main(string[] args) {
 		try {
 			socket.connect(new UnixAddress(environment["HOME"] ~ "/.detachable-terminals/" ~ sname));
 		} catch(Exception e) {
+		// import std.stdio; writeln(e); return null;
 			socket = null;
 
 			if(spawn) {
@@ -95,9 +108,42 @@ void main(string[] args) {
 					dup2(n, 0);
 					dup2(n2, 1);
 
+					// also detach from the calling foreground process group
+					// because otherwise SIGINT will be sent to this too and kill
+					// it instead of just going to the parent and being translated
+					// into a ctrl+c input for the child.
+
+					setpgid(0, 0);
+
+					{
+						// and run the detachable backend now
+
+						// also changing the command line as seen in the shell ps command
+						import core.runtime;
+						auto cArgs = Runtime.cArgs;
+						if(cArgs.argc) {
+							import core.stdc.string;
+							auto toOverwritePtr = cArgs.argv[0];
+							auto toOverwrite = toOverwritePtr[0 .. strlen(toOverwritePtr)];
+							toOverwrite[] = 0;
+							auto newName = "ATTACH";
+							if(newName.length > toOverwrite.length - 1)
+								newName = newName[0 .. toOverwrite.length - 1]; // leave room for a 0 terminator
+							toOverwrite[0 .. newName.length] = newName[];
+						}
+
+						// and calling main
+						import arsd.detachableterminalemulator;
+						detachableMain([args[0], sname]);
+					}
+
+					// alternatively, but this requires a separate binary:
+					// compile with -version=standalone_detachable if you want it (is better for debugging btw)
+					/*
 					auto proggie = "/home/me/program/terminal-emulator/detachable";
 					if(execl(proggie.ptr, proggie.ptr, (sname ~ "\0").ptr, 0))
 						throw new Exception("wtf " ~ to!string(errno));
+					*/
 				}
 			}
 		}
@@ -228,6 +274,8 @@ void main(string[] args) {
 	bool running = true;
 
 	void closeSocket() {
+		assert(socket !is null);
+
 		int switchTo = -1;
 		foreach(idx, ref child; children) {
 			if(child.socket is socket) {
@@ -237,6 +285,8 @@ void main(string[] args) {
 				break;
 			}
 		}
+
+		socket.close();
 
 		if(switchTo >= children.length)
 			switchTo = 0;
@@ -253,6 +303,10 @@ void main(string[] args) {
 		setActiveScreen(switchTo);
 	}
 
+	int commandLinePosition = -1;
+	dchar[256] commandLineBuffer;
+	dchar[] commandLine = commandLineBuffer[];
+
 	void handleEvent(InputEvent event) {
 		// FIXME: UI stuff
 
@@ -264,6 +318,30 @@ void main(string[] args) {
 				auto ce = event.get!(InputEvent.Type.CharacterEvent);
 				if(ce.eventType == CharacterEvent.Type.Released)
 					return;
+
+				if(commandLinePosition >= 0) {
+					switch(ce.character) {
+						case 10:
+							auto cmdLine = commandLine[0 .. commandLinePosition];
+							commandLinePosition = -1;
+							setActiveScreen(activeScreen, true); // get the app to redraw
+							terminal.write(cmdLine);
+						break;
+						case 8:
+							if(commandLinePosition)
+								commandLinePosition--;
+							terminal.write(ce.character);
+						break;
+						default:
+							if(commandLinePosition >= commandLine.length)
+								commandLine.length = commandLine.length * 2;
+
+							commandLine[commandLinePosition++] = ce.character;
+							terminal.write(ce.character);
+					}
+
+					return;
+				}
 
 				if(escaping) {
 					if(ce.character == 1) {
@@ -287,6 +365,15 @@ void main(string[] args) {
 						break;
 						case 'd':
 							running = false;
+						break;
+						case ':':
+							terminal.moveTo(0, terminal.height - 1);
+							terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.alwaysSend, true);
+							terminal.write(": ");
+							foreach(i; 2 .. terminal.width)
+								terminal.write(" ");
+							terminal.moveTo(2, terminal.height - 1);
+							commandLinePosition = 0;
 						break;
 						case 'c':
 							int position = -1;
@@ -476,6 +563,7 @@ void main(string[] args) {
 				if(len <= 0) {
 					// probably end of file or something cuz the child exited
 					// we should switch to the next possible screen
+					// throw new Exception("closing cuz of bad read " ~ to!string(errno));
 					closeSocket();
 
 					continue;
