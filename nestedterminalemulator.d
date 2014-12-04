@@ -77,6 +77,7 @@ void main(string[] args) {
 		} else {
 			auto terminal = Terminal(ConsoleOutputType.cellular);
 			auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+			terminal._wrapAround = false;
 		}
 
 		auto te = new NestedTerminalEmulator(master, &terminal);
@@ -344,16 +345,10 @@ class NestedTerminalEmulator : TerminalEmulator {
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			ushort tfg, tbg;
-			bool insideSelection;
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
-
-			if(selectionEnd > selectionStart)
-				insideSelection = idx >= selectionStart && idx < selectionEnd;
-			else
-				insideSelection = idx >= selectionEnd && idx < selectionStart;
 
 			//auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
 			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
@@ -399,7 +394,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 					terminal.moveTo(x, y);
 
 					bool reverse = cell.attributes.inverse != reverseVideo; /* != == ^ btw */
-					if(insideSelection)
+					if(cell.selected)
 						reverse = !reverse;
 
 					// reducing it to 16 color

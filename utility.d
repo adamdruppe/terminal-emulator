@@ -70,6 +70,7 @@ export void changeCurrentCursor(Terminal* t, TerminalEmulator.CursorStyle style)
 
 export void displayImage(Terminal* t, string filename) {
 	t.writeStringRaw("\000");
+	t.writeStringRaw(extensionMagicIdentifier);
 	import std.base64, std.file;
 	t.writeStringRaw(Base64.encode(cast(ubyte[]) std.file.read(filename)));
 	t.writeStringRaw("\000");

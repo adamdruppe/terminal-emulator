@@ -37,13 +37,23 @@ struct ChildTerminal {
 }
 
 void main(string[] args) {
+	bool debugMode;
+
 	string[] snames;
 	if(args.length > 1) {
 		foreach(arg; args[1 .. $])
 			snames ~= arg;
 	} else {
 		// list the available sockets...
-		// FIXME
+		import std.file, std.process, std.stdio;
+		bool found = false;
+		auto dirName = environment["HOME"] ~ "/.detachable-terminals";
+		foreach(string name; dirEntries(dirName, SpanMode.shallow)) {
+			writeln(name[dirName.length + 1 .. $]);
+			found = true;
+		}
+		if(!found)
+			writeln("No screens found");
 		return;
 	}
 
@@ -267,6 +277,7 @@ void main(string[] args) {
 						}
 					} else
 					switch(ce.character) {
+						case 'q': debugMode = !debugMode; break;
 						case 't':
 							showingTaskbar = !showingTaskbar;
 							setActiveScreen(activeScreen, true);
@@ -472,11 +483,13 @@ void main(string[] args) {
 
 				auto toWrite = buffer[0 .. len];
 				while(len) {
-					auto wrote = write(1, toWrite.ptr, len);
-					if(wrote <= 0)
-						throw new Exception("write");
-					toWrite = toWrite[wrote .. $];
-					len -= wrote;
+					if(!debugMode) {
+						auto wrote = write(1, toWrite.ptr, len);
+						if(wrote <= 0)
+							throw new Exception("write");
+						toWrite = toWrite[wrote .. $];
+						len -= wrote;
+					} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
 				}
 			}
 		}

@@ -73,12 +73,16 @@ void main(string[] args) {
 			sname = to!string(getpid);
 		}
 
-		auto dte = new DetachableTerminalEmulator(master, "/home/me/.detachable-terminals/" ~ sname);
+		import std.process;
+		import std.file;
+		if(!exists(environment["HOME"] ~ "/.detachable-terminals"))
+			mkdir(environment["HOME"] ~ "/.detachable-terminals");
+		auto dte = new DetachableTerminalEmulator(master, environment["HOME"] ~ "/.detachable-terminals/" ~ sname);
 
 		loop();
 
 		import core.sys.posix.unistd;
-		unlink(("/home/me/.detachable-terminals/" ~ sname ~ "\0").ptr);
+		unlink((environment["HOME"] ~ "/.detachable-terminals/" ~ sname ~ "\0").ptr);
 	}
 	startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
 }
@@ -232,6 +236,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		environment["TERM"] = "xterm";
 		static import terminal_module = terminal;
 		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, cast(int) socket.handle, null /* FIXME? */);
+		terminal._wrapAround = false;
 
 		// these are about ensuring the caching doesn't break between calls given invalidation...
 		terminal._currentForeground = -1;
@@ -241,21 +246,15 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		terminal.hideCursor();
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+			ushort tfg, tbg;
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
 
-			bool insideSelection;
-			if(selectionEnd > selectionStart)
-				insideSelection = idx >= selectionStart && idx < selectionEnd;
-			else
-				insideSelection = idx >= selectionEnd && idx < selectionStart;
-
 			//auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
 			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
 
-			ushort tfg, tbg;
 			{
 				import t = terminal;
 				// we always work with indexes, so the fallback flag is irrelevant here
@@ -275,7 +274,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					isFirst = false;
 
 					bool reverse = cell.attributes.inverse != reverseVideo; /* != == ^ btw */
-					if(insideSelection)
+					if(cell.selected)
 						reverse = !reverse;
 
 					// reducing it to 16 color

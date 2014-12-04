@@ -109,7 +109,7 @@ void main(string[] args) {
 		term.window.eventLoop(10);
 	}
 
-	if(args.length < 3) {
+	if(args.length < 2) {
 		import std.stdio;
 		writeln("Give a command line to run like: plink.exe user@server.com -i keyfile /opt/serverside");
 		return;
@@ -438,6 +438,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					}
 					data.putPixel(x, y, mi.imageData.colors[(iy + y) * mi.width + (ix + x)]);
 				}
+				// FIXME: fill it with a transparent pixel or at least the background color
+				// if there's space left off the side due to not quite fitting in a perfect text cell
 			}
 
 			ix += fontWidth;
@@ -645,6 +647,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			endScrollback();
 			char[4] str;
 			import std.utf;
+			if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
 			auto data = str[0 .. encode(str, c)];
 
 			// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.

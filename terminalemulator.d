@@ -2,8 +2,6 @@
 	There should be a redraw thing that is given batches of instructions
 	in here that the other thing just implements.
 
-	FIXME: the X thing from vim's tab list goes on the next line improperly
-	FIXME: vim inside screen, the O command doesn't work right
 	FIXME: the save stack stuff should do cursor style too
 
 	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
@@ -15,6 +13,8 @@
 module arsd.terminalemulator;
 
 import arsd.color;
+
+enum extensionMagicIdentifier = "ARSD Terminal Emulator binary extension data follows:";
 
 interface NonCharacterData {
 	//const(ubyte)[] serialize();
@@ -426,8 +426,17 @@ class TerminalEmulator {
 		ta.foregroundIndex = 256; // terminal.d uses this as Color.DEFAULT
 		ta.backgroundIndex = 256;
 
-		ta.foreground = Color.white; // Color.black;
-		ta.background = Color.black; // Color.white;
+		import std.process;
+		// I'm using the environment for this because my programs and scripts
+		// already know this variable and then it gets nicely inherited. It is
+		// also easy to set without buggering with other arguments. So works for me.
+		if(environment.get("ELVISBG") == "dark") {
+			ta.foreground = Color.white;
+			ta.background = Color.black;
+		} else {
+			ta.foreground = Color.black;
+			ta.background = Color.white;
+		}
 		return ta;
 	}
 
@@ -575,8 +584,10 @@ class TerminalEmulator {
 	}
 
 
-	bool readingExtensionData;
+	int readingExtensionData = -1;
 	string extensionData;
+
+	immutable(dchar[dchar])* characterSet = null; // null means use regular UTF-8
 
 	bool readingEsc = false;
 	ubyte[] esc;
@@ -585,30 +596,37 @@ class TerminalEmulator {
 	//import std.array;
 	//assert(!readingEsc, replace(cast(string) esc, "\033", "\\"));
 		foreach(b; data) {
-			if(readingExtensionData) {
-				if(b) {
-					if(b != 13 && b != 10)
-						extensionData ~= b;
-				} else {
-					readingExtensionData = false;
-					import std.base64;
-					auto got = handleBinaryExtensionData(Base64.decode(extensionData));
+			if(readingExtensionData >= 0) {
+				if(readingExtensionData == extensionMagicIdentifier.length) {
+					if(b) {
+						if(b != 13 && b != 10)
+							extensionData ~= b;
+					} else {
+						readingExtensionData = -1;
+						import std.base64;
+						auto got = handleBinaryExtensionData(Base64.decode(extensionData));
 
-					auto rep = got.representation;
-					foreach(y; 0 .. got.height) {
-						foreach(x; 0 .. got.width) {
-							addOutput(rep[0]);
-							rep = rep[1 .. $];
+						auto rep = got.representation;
+						foreach(y; 0 .. got.height) {
+							foreach(x; 0 .. got.width) {
+								addOutput(rep[0]);
+								rep = rep[1 .. $];
+							}
+							newLine(true);
 						}
-						newLine(true);
 					}
+				} else {
+					if(b == extensionMagicIdentifier[readingExtensionData])
+						readingExtensionData++;
+					else
+						readingExtensionData = -1;
 				}
 
 				continue;
 			}
 
 			if(b == 0) {
-				readingExtensionData = true;
+				readingExtensionData = 0;
 				extensionData = null;
 				continue;
 			}
@@ -671,6 +689,11 @@ class TerminalEmulator {
 					// xterm command for character set
 					// FIXME: handling esc[1] == '0' would be pretty boss
 					// and esc[1] == 'B' == united states
+					if(esc[1] == '0')
+						characterSet = &lineDrawingCharacterSet;
+					else
+						characterSet = null; // our default is UTF-8 and i don't care much about others anyway.
+
 					esc = null;
 					readingEsc = false;
 				}
@@ -1044,6 +1067,15 @@ class TerminalEmulator {
 			if(utf8Sequence == 10) {
 				newLineOnNext = false;
 				auto cx = cursorX; // FIXME: this cx thing is a hack, newLine should prolly just do the right thing
+
+				/*
+				TerminalCell tc;
+				tc.ch = utf8Sequence;
+				tc.attributes = currentAttributes;
+				tc.invalidated = true;
+				addOutput(tc);
+				*/
+
 				newLine(true);
 				cursorX = cx;
 			} else {
@@ -1054,6 +1086,11 @@ class TerminalEmulator {
 						newLine(false);
 				}
 				TerminalCell tc;
+
+				if(characterSet !is null) {
+					if(auto replacement = utf8Sequence in *characterSet)
+						utf8Sequence = *replacement;
+				}
 				tc.ch = utf8Sequence;
 				tc.attributes = currentAttributes;
 				tc.invalidated = true;
@@ -2089,7 +2126,8 @@ mixin template ForwardVirtuals(alias writer) {
 	}
 
 	protected override void changeWindowTitle(string t) {
-		if(t.length)
+		import std.process;
+		if(t.length && environment["TERM"] != "linux")
 			writer("\033]0;"~t~"\007");
 	}
 
@@ -2634,4 +2672,40 @@ Color[] xtermPalette() { return [
 	Color(228, 228, 228),
 	Color(238, 238, 238),
 ];
+}
+
+static shared immutable dchar[dchar] lineDrawingCharacterSet;
+shared static this() {
+	lineDrawingCharacterSet = [
+		'a' : ':',
+		'j' : '+',
+		'k' : '+',
+		'l' : '+',
+		'm' : '+',
+		'n' : '+',
+		'q' : '-',
+		't' : '+',
+		'u' : '+',
+		'v' : '+',
+		'w' : '+',
+		'x' : '|',
+	];
+
+	// this is what they SHOULD be but the font i use doesn't support all these
+	// the ascii fallback above looks pretty good anyway though.
+	version(none)
+	lineDrawingCharacterSet = [
+		'a' : '\u2592',
+		'j' : '\u2518',
+		'k' : '\u2510',
+		'l' : '\u250c',
+		'm' : '\u2514',
+		'n' : '\u253c',
+		'q' : '\u2500',
+		't' : '\u251c',
+		'u' : '\u2524',
+		'v' : '\u2534',
+		'w' : '\u252c',
+		'x' : '\u2502',
+	];
 }

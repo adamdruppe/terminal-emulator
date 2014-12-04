@@ -21,6 +21,7 @@ version(Posix) {
 		enum int SIGCHLD = 17;
 	}
 	import core.sys.posix.termios;
+	import core.sys.posix.sys.ioctl;
 	import core.stdc.errno;
 
 	__gshared int childrenAlive = 0;
