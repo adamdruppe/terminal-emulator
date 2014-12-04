@@ -1889,6 +1889,7 @@ version(Posix) {
 	void startChild(alias masterFunc)(string program, string[] args) {
 		import core.sys.posix.termios;
 		import core.sys.posix.signal;
+		import core.sys.posix.sys.wait;
 		__gshared static int childrenAlive = 0;
 		extern(C) nothrow static @nogc
 		void childdead(int) {
@@ -1897,6 +1898,7 @@ version(Posix) {
 			try {
 			import arsd.eventloop;
 			if(childrenAlive == 0)
+				wait(null);
 				exit();
 			} catch(Exception e){}
 		}

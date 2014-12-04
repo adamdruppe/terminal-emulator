@@ -99,7 +99,9 @@ void detachableMain(string[] args) {
 		loop();
 
 		import core.sys.posix.unistd;
+		dte.dispose();
 		unlink((environment["HOME"] ~ "/.detachable-terminals/" ~ sname ~ "\0").ptr);
+		close(master);
 	}
 	startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
 }
@@ -135,6 +137,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		auto len = socket.receive(buffer[l2 .. $]);
 		if(len <= 0) {
 			// they closed, so we'll detach too
+			socket.shutdown(SocketShutdown.BOTH);
 			socket.close();
 			removeFileEventListeners(cast(int) socket.handle);
 			socket = null;
@@ -231,6 +234,18 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 		super(80, 25);
 	}
+
+	void dispose() {
+		if(listeningSocket !is null) {
+			listeningSocket.shutdown(SocketShutdown.BOTH);
+			listeningSocket.close();
+		}
+		if(socket !is null) {
+			socket.shutdown(SocketShutdown.BOTH);
+			socket.close();
+		}
+	}
+
 	bool debugMode;
 	mixin PtySupport!(doNothing);
 

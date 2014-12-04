@@ -5,6 +5,9 @@ underlining is ugly
 
 sometimes scrolling up or opening lines in vim doesn't work right
 
+ALL my open emulators randomly die on X. This does not make sense as they
+are separate processes... but maybe they're all part of the same group or something and thus receive signals together. But what signal? Why is it sent? Seems to happen randomly when I switch workspaces.
+
 
 If any part of the selection changes, the whole selected text ought to become unselected. (It may remain on the clipboard though.)
 

@@ -16,6 +16,9 @@ import terminal;
 
 	or maybe C-a c means create temporary.
 	C-a C means create permanent. Permanent screens get a proper name and are added to the session.
+
+	C-a D means detach current screen only
+	C-a d detaches the whole session
 */
 
 /*
@@ -34,6 +37,7 @@ import terminal;
 	If a thing doesn't exist, it should spawn a detchableterminalemulator automatically.
 */
 
+static import core.stdc.stdlib;
 import std.conv;
 import std.socket;
 struct ChildTerminal {
@@ -46,6 +50,12 @@ struct ChildTerminal {
 	// for mouse click detection
 	int x;
 	int x2;
+}
+
+extern(C) nothrow static @nogc
+void detachable_child_dead(int) {
+	import core.sys.posix.sys.wait;
+	wait(null);
 }
 
 void main(string[] args) {
@@ -71,85 +81,10 @@ void main(string[] args) {
 
 	import core.sys.posix.signal;
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGCHLD, &detachable_child_dead);
 
 	import std.process;
 	ChildTerminal[] children;
-
-	Socket connectTo(string sname, bool spawn = true) {
-		auto socket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
-		try {
-			socket.connect(new UnixAddress(environment["HOME"] ~ "/.detachable-terminals/" ~ sname));
-		} catch(Exception e) {
-		// import std.stdio; writeln(e); return null;
-			socket = null;
-
-			if(spawn) {
-				import core.sys.posix.unistd;
-				if(auto pid = fork()) {
-					import core.sys.posix.sys.wait;
-					int status;
-					//waitpid(pid, &status, 0); // let the other one initialize...
-						import core.thread;
-						Thread.sleep(dur!"msecs"(250)); // give the child a chance to get started...
-					auto newSocket = connectTo(sname, false);
-					if(newSocket is null)
-						sname = "[failed]";
-
-					socket = newSocket;
-				} else {
-					// child
-
-					import core.sys.posix.fcntl;
-					auto n = open("/dev/null", O_RDONLY);
-					auto n2 = open("/dev/null", O_WRONLY);
-					assert(n >= 0);
-					import core.stdc.errno;
-					assert(n2 >= 0, to!string(errno));
-					dup2(n, 0);
-					dup2(n2, 1);
-
-					// also detach from the calling foreground process group
-					// because otherwise SIGINT will be sent to this too and kill
-					// it instead of just going to the parent and being translated
-					// into a ctrl+c input for the child.
-
-					setpgid(0, 0);
-
-					{
-						// and run the detachable backend now
-
-						// also changing the command line as seen in the shell ps command
-						import core.runtime;
-						auto cArgs = Runtime.cArgs;
-						if(cArgs.argc) {
-							import core.stdc.string;
-							auto toOverwritePtr = cArgs.argv[0];
-							auto toOverwrite = toOverwritePtr[0 .. strlen(toOverwritePtr)];
-							toOverwrite[] = 0;
-							auto newName = "ATTACH";
-							if(newName.length > toOverwrite.length - 1)
-								newName = newName[0 .. toOverwrite.length - 1]; // leave room for a 0 terminator
-							toOverwrite[0 .. newName.length] = newName[];
-						}
-
-						// and calling main
-						import arsd.detachableterminalemulator;
-						detachableMain([args[0], sname]);
-					}
-
-					// alternatively, but this requires a separate binary:
-					// compile with -version=standalone_detachable if you want it (is better for debugging btw)
-					/*
-					auto proggie = "/home/me/program/terminal-emulator/detachable";
-					if(execl(proggie.ptr, proggie.ptr, (sname ~ "\0").ptr, 0))
-						throw new Exception("wtf " ~ to!string(errno));
-					*/
-				}
-			}
-		}
-		return socket;
-	}
-
 	foreach(idx, sname; snames) {
 		auto socket = connectTo(sname);
 		if(socket is null)
@@ -206,7 +141,7 @@ void main(string[] args) {
 			spaceRemaining--; // save space for the close button on the end
 		}
 
-			socket = children[s].socket;
+		socket = children[s].socket;
 
 		if(showingTaskbar) {
 			foreach(idx, ref child; children) {
@@ -265,7 +200,7 @@ void main(string[] args) {
 
 	foreach(idx, child; children)
 		if(child.socket !is null) {
-			setActiveScreen(idx);
+			setActiveScreen(idx, true);
 			break;
 		}
 	if(socket is null)
@@ -273,23 +208,49 @@ void main(string[] args) {
 
 	bool running = true;
 
-	void closeSocket() {
-		assert(socket !is null);
+	void closeSocket(Socket socketToClose = null) {
+		if(socketToClose is null)
+			socketToClose = socket;
+		assert(socketToClose !is null);
 
 		int switchTo = -1;
 		foreach(idx, ref child; children) {
-			if(child.socket is socket) {
+			if(child.socket is socketToClose) {
 				child.socket = null;
 				child.title = "[vacant]";
-				switchTo = idx + 1;
+				switchTo = previousScreen;
+				import std.stdio; writeln("closing ", idx);
 				break;
 			}
 		}
 
-		socket.close();
+		socketToClose.shutdown(SocketShutdown.BOTH);
+		socketToClose.close();
+
+		if(socketToClose !is socket) {
+			setActiveScreen(activeScreen, true); // redraw the taskbar
+			return; // no need to close; it isn't the active socket
+		}
+
+		socket = null;
 
 		if(switchTo >= children.length)
 			switchTo = 0;
+
+		foreach(s; switchTo .. children.length)
+			if(children[s].socket !is null) {
+				switchTo = s;
+				goto allSet;
+			}
+		foreach(s; 0 .. switchTo)
+			if(children[s].socket !is null) {
+				switchTo = s;
+				goto allSet;
+			}
+
+		switchTo = -1;
+
+		allSet:
 
 		if(switchTo < 0 || switchTo >= children.length) {
 			running = false;
@@ -300,7 +261,7 @@ void main(string[] args) {
 			socket = null;
 			return;
 		}
-		setActiveScreen(switchTo);
+		setActiveScreen(switchTo, true);
 	}
 
 	int commandLinePosition = -1;
@@ -536,10 +497,16 @@ void main(string[] args) {
 		FD_ZERO(&rdfs);
 
 		FD_SET(0, &rdfs);
-		if(socket !is null)
-			FD_SET(socket.handle, &rdfs);
+		int maxFd = 0;
+		foreach(child; children) {
+			if(child.socket !is null) {
+				FD_SET(child.socket.handle, &rdfs);
+				if(child.socket.handle > maxFd)
+					maxFd = child.socket.handle;
+			}
+		}
 
-		auto ret = select((socket is null ? 0 : cast(int)socket.handle) + 1, &rdfs, null, null, null);
+		auto ret = select(maxFd + 1, &rdfs, null, null, null);
 		if(ret == -1) {
 			if(errno == 4) {
 				// FIXME: check interrupted and size event
@@ -556,30 +523,133 @@ void main(string[] args) {
 				handleEvent(input.nextEvent());
 			}
 
-			if(socket !is null)
-			if(FD_ISSET(socket.handle, &rdfs)) {
-				// data from the pty should be forwarded straight out
-				int len = read(socket.handle, buffer.ptr, buffer.length);
-				if(len <= 0) {
-					// probably end of file or something cuz the child exited
-					// we should switch to the next possible screen
-					// throw new Exception("closing cuz of bad read " ~ to!string(errno));
-					closeSocket();
+			foreach(child; children) {
+				if(child.socket !is null)
+				if(FD_ISSET(child.socket.handle, &rdfs)) {
+					// data from the pty should be forwarded straight out
+					int len = read(child.socket.handle, buffer.ptr, buffer.length);
+					if(len <= 0) {
+						// probably end of file or something cuz the child exited
+						// we should switch to the next possible screen
+						// throw new Exception("closing cuz of bad read " ~ to!string(errno));
+						closeSocket(child.socket);
 
-					continue;
-				}
+						continue;
+					}
 
-				auto toWrite = buffer[0 .. len];
-				while(len) {
-					if(!debugMode) {
-						auto wrote = write(1, toWrite.ptr, len);
-						if(wrote <= 0)
-							throw new Exception("write");
-						toWrite = toWrite[wrote .. $];
-						len -= wrote;
-					} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+					if(child.socket is socket) {
+						auto toWrite = buffer[0 .. len];
+						while(len) {
+							if(!debugMode) {
+								auto wrote = write(1, toWrite.ptr, len);
+								if(wrote <= 0)
+									throw new Exception("write");
+								toWrite = toWrite[wrote .. $];
+								len -= wrote;
+							} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+						}
+					}
 				}
 			}
 		}
 	}
 }
+
+
+Socket connectTo(string sname, bool spawn = true) {
+	import std.process;
+	auto socket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+	try {
+		socket.connect(new UnixAddress(environment["HOME"] ~ "/.detachable-terminals/" ~ sname));
+	} catch(Exception e) {
+		// if it can't connect, we'll spawn a new backend to control it
+
+		// import std.stdio; writeln(e); return null;
+		socket = null;
+
+		if(spawn) {
+			import core.sys.posix.unistd;
+			if(auto pid = fork()) {
+				int tries = 3;
+				while(tries > 0 && socket is null) {
+					// give the child a chance to get started...
+					import core.thread;
+					Thread.sleep(dur!"msecs"(25));
+
+					// and try to connect
+					auto newSocket = connectTo(sname, false);
+					if(newSocket is null)
+						sname = "[failed]";
+
+					socket = newSocket;
+					tries--;
+				}
+			} else {
+				// child
+
+				import core.sys.posix.fcntl;
+				auto n = open("/dev/null", O_RDONLY);
+				auto n2 = open("/dev/null", O_WRONLY);
+				assert(n >= 0);
+				import core.stdc.errno;
+				assert(n2 >= 0, to!string(errno));
+				dup2(n, 0);
+				dup2(n2, 1);
+
+				// also detach from the calling foreground process group
+				// because otherwise SIGINT will be sent to this too and kill
+				// it instead of just going to the parent and being translated
+				// into a ctrl+c input for the child.
+
+				setpgid(0, 0);
+
+				if(true) {
+					// and run the detachable backend now
+
+					{
+					// If we don't do this, events will get mixed up because
+					// the pipes handles would be inherited across fork.
+					import arsd.eventloop;
+					openNewEventPipes();
+					}
+
+
+					// also changing the command line as seen in the shell ps command
+					import core.runtime;
+					auto cArgs = Runtime.cArgs;
+					if(cArgs.argc) {
+						import core.stdc.string;
+						auto toOverwritePtr = cArgs.argv[0];
+						auto toOverwrite = toOverwritePtr[0 .. strlen(toOverwritePtr)];
+						toOverwrite[] = 0;
+						auto newName = "ATTACH";
+						if(newName.length > toOverwrite.length - 1)
+							newName = newName[0 .. toOverwrite.length - 1]; // leave room for a 0 terminator
+						toOverwrite[0 .. newName.length] = newName[];
+					}
+
+					// and calling main
+					import arsd.detachableterminalemulator;
+					try {
+						detachableMain(["ATTACH", sname]);
+					} catch(Throwable t) {
+
+					}
+
+					core.stdc.stdlib.exit(0); // we want this process dead like it would be with exec()
+				}
+
+				// alternatively, but this requires a separate binary:
+				// compile it separately with -version=standalone_detachable if you want it (is better for debugging btw) then use this code
+				/*
+				auto proggie = "/home/me/program/terminal-emulator/detachable";
+				if(execl(proggie.ptr, proggie.ptr, (sname ~ "\0").ptr, 0))
+					throw new Exception("wtf " ~ to!string(errno));
+				*/
+			}
+		}
+	}
+	return socket;
+}
+
+
