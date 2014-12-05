@@ -55,6 +55,7 @@
 
 module arsd.detachableterminalemulator;
 
+import arsd.detachableterminalemulatormessage;
 import arsd.terminalemulator;
 import arsd.eventloop;
 
@@ -75,8 +76,12 @@ void main(string[] args) { detachableMain(args); }
 
 void detachableMain(string[] args) {
 	string sname;
-	if(args.length > 1) {
+	if(args.length > 1 && args[1].length) {
 		sname = args[1];
+	} else {
+		import std.conv;
+		import core.sys.posix.unistd;
+		sname = to!string(getpid());
 	}
 
 	//signal(SIGPIPE, SIG_IGN);
@@ -92,15 +97,16 @@ void detachableMain(string[] args) {
 
 		import std.process;
 		import std.file;
-		if(!exists(environment["HOME"] ~ "/.detachable-terminals"))
-			mkdir(environment["HOME"] ~ "/.detachable-terminals");
-		auto dte = new DetachableTerminalEmulator(master, environment["HOME"] ~ "/.detachable-terminals/" ~ sname);
+		if(!exists(socketDirectoryName()))
+			mkdir(socketDirectoryName());
+		auto dte = new DetachableTerminalEmulator(master, socketFileName(sname), sname);
 
 		loop();
 
 		import core.sys.posix.unistd;
+		import std.string : toStringz;
 		dte.dispose();
-		unlink((environment["HOME"] ~ "/.detachable-terminals/" ~ sname ~ "\0").ptr);
+		unlink(toStringz(socketFileName(sname)));
 		close(master);
 	}
 	startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
@@ -108,7 +114,7 @@ void detachableMain(string[] args) {
 
 
 class DetachableTerminalEmulator : TerminalEmulator {
-	void writer(in char[] data) {
+	void writer(in void[] data) {
 		if(socket !is null)
 			socket.send(data);
 	}
@@ -148,7 +154,6 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		assert(len > 4);
 
 		while(got.length) {
-			import arsd.detachableterminalemulatormessage;
 			InputMessage* im = cast(InputMessage*) got.ptr;
 
 			if(im.eventLength > got.length) {
@@ -223,7 +228,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		}
 	}
 
-	this(int master, string socketName) {
+	this(int master, string socketName, string title) {
 		this.master = master;
 		addFileEventListeners(master, &readyToRead, null, null);
 
@@ -231,6 +236,8 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		addFileEventListeners(cast(int) listeningSocket.handle, &acceptConnection, null, null);
 		listeningSocket.bind(new UnixAddress(socketName));
 		listeningSocket.listen(8);
+
+		windowTitle = title;
 
 		super(80, 25);
 	}

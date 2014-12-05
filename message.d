@@ -1,6 +1,19 @@
 // this module defines a message you can shoot over the socket to a detachable emulator
 module arsd.detachableterminalemulatormessage;
 
+string socketFileName(string sessionName) {
+	import std.algorithm;
+	if(endsWith(sessionName, ".socket"))
+		sessionName = sessionName[0 .. $ - ".socket".length];
+	return socketDirectoryName() ~ "/" ~ sessionName ~ ".socket";
+}
+
+string socketDirectoryName() {
+	import std.process;
+	auto dirName = environment["HOME"] ~ "/.detachable-terminals";
+	return dirName;
+}
+
 struct InputMessage {
 	enum Type : int {
 		// key event
@@ -71,4 +84,10 @@ struct InputMessage {
 	}
 }
 
-
+/*
+struct OutputMessage {
+	ubyte type;
+	ushort length;
+	ubyte[1] data;
+}
+*/

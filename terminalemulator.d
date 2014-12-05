@@ -60,6 +60,18 @@ class TerminalEmulator {
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
 	protected abstract void pasteFromClipboard(void delegate(string)); /// requests a paste. we pass it a delegate that should accept the data
 
+	/// Signal the UI that some attention should be given, e.g. blink the taskbar or sound the bell.
+	/// The default is to ignore the demand by instantly acknowledging it - if you override this, do NOT call super().
+	protected void demandAttention() {
+		attentionReceived();
+	}
+
+	/// After it demands attention, call this when the attention has been received
+	/// you may call it immediately to ignore the demand (the default)
+	public void attentionReceived() {
+		attentionDemanded = false;
+	}
+
 	// I believe \033[50~ and up are available for extensions everywhere.
 	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
 	// apparently shifted F5 is ^[[15;2~
@@ -638,7 +650,7 @@ class TerminalEmulator {
 				esc ~= b;
 
 				if(esc.length == 1 && esc[0] == '7') {
-					savedCursor = cursorPosition;
+					savedCursors ~= cursorPosition;
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == 'M') {
@@ -658,7 +670,7 @@ class TerminalEmulator {
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == '8') {
-					cursorPosition = savedCursor;
+					cursorPosition = popSavedCursor;
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == 'c') {
@@ -911,15 +923,27 @@ class TerminalEmulator {
 		cursorX = cursorX;
 	}
 
+	private CursorPosition popSavedCursor() {
+		CursorPosition pos;
+		if(savedCursors.length) {
+			pos = savedCursors[$-1];
+			savedCursors = savedCursors[0 .. $-1];
+			savedCursors.assumeSafeAppend(); // we never keep references elsewhere so might as well reuse the memory as much as we can
+		}
+		return pos;
+	}
+
 	/* FIXME: i want these to be private */
 	protected {
 		TextAttributes currentAttributes;
 		CursorPosition cursorPosition;
-		CursorPosition savedCursor;
+		CursorPosition[] savedCursors; // a stack
 		CursorStyle cursorStyle;
 		Color cursorColor;
 		string windowTitle;
 		string iconTitle;
+
+		bool attentionDemanded;
 
 		IndexedImage windowIcon;
 		IndexedImage[] iconStack;
@@ -1312,6 +1336,11 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							windowIcon = img;
 							changeWindowIcon(img);
 						break;
+						case "5001":
+							// demand attention
+							attentionDemanded = true;
+							demandAttention();
+						break;
 						default:
 							assert(0, "" ~ cast(char) esc[1]);
 					}
@@ -1648,7 +1677,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								case 1049:
 									// Save cursor as in DECSC and use Alternate Screen Buffer, clearing it first.
 									alternateScreenActive = true;
-									savedCursor = cursorPosition;
+									savedCursors ~= cursorPosition;
 									cls();
 								break;
 								case 1000:
@@ -1676,7 +1705,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									// enable utf-8 mouse mode
 								break;
 								case 1048:
-									savedCursor = cursorPosition;
+									savedCursors ~= cursorPosition;
 								break;
 								case 2004:
 									bracketedPasteMode = true;
@@ -1738,7 +1767,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								break;
 								case 1049:
 									alternateScreenActive = false;
-									cursorPosition = savedCursor;
+									cursorPosition = popSavedCursor;
 									wraparoundMode = true;
 								break;
 								case 9:
@@ -1748,7 +1777,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									allMouseTrackingOff();
 								break;
 								case 1048:
-									cursorPosition = savedCursor;
+									cursorPosition = popSavedCursor;
 								break;
 								case 2004:
 									bracketedPasteMode = false;
@@ -2135,8 +2164,10 @@ mixin template ForwardVirtuals(alias writer) {
 
 	protected override void changeWindowIcon(arsd.color.IndexedImage t) {
 		if(t !is null) {
-			// forward it via our extension. xterm and such seems to ignore this so we should be ok just sending
-			writer("\033]5000;" ~ encodeSmallTextImage(t) ~ "\007");
+			// forward it via our extension. xterm and such seems to ignore this so we should be ok just sending, except to Linux
+			import std.process;
+			if(environment["TERM"] != "linux")
+				writer("\033]5000;" ~ encodeSmallTextImage(t) ~ "\007");
 		}
 	}
 
@@ -2144,6 +2175,11 @@ mixin template ForwardVirtuals(alias writer) {
 	protected override void changeTextAttributes(TextAttributes) {} // FIXME
 	protected override void soundBell() {
 		writer("\007");
+	}
+	protected override void demandAttention() {
+		import std.process;
+		if(environment["TERM"] != "linux")
+			writer("\033]5001;1\007"); // the 1 there means true but is currently ignored
 	}
 	protected override void copyToClipboard(string text) {
 		// this is xterm compatible, though xterm rarely implements it

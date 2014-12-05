@@ -140,6 +140,10 @@ void main(string[] args) {
 }
 
 import simpledisplay;
+
+static if(UsingSimpledisplayX11)
+	import arsd.xwindows;
+
 import stb_truetype;
 struct XImagePainter {
 	Image img;
@@ -472,6 +476,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			XBell(XDisplayConnection.get(), 50);
 	}
 
+	protected override void demandAttention() {
+		if(!focused) {
+			static if(UsingSimpledisplayX11)
+				arsd.xwindows.demandAttention(window, true);
+		}
+	}
+
 	protected override void copyToClipboard(string text) {
 		static if(UsingSimpledisplayX11)
 			setPrimarySelection(window, text);
@@ -517,6 +528,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	version(Windows)
 	HFONT hFont;
 
+	bool focused;
+
 	this(int fontSize = 0) {
 		if(fontSize) {
 			this.usingTtf = true;
@@ -557,6 +570,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			this.resizeTerminal(w / fontWidth, h / fontHeight);
 			clearScreenRequested = true;
 			redraw();
+		};
+
+		window.onFocusChange = (bool got) {
+			focused = got;
+			attentionReceived();
+			static if(UsingSimpledisplayX11)
+				arsd.xwindows.demandAttention(window, false);
 		};
 
 		super(desiredWidth, desiredHeight);
