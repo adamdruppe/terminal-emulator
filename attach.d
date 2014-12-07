@@ -206,6 +206,21 @@ void main(string[] args) {
 	auto terminal = Terminal(ConsoleOutputType.cellular);
 	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
 
+	// We got a bit beyond what Terminal does and also disable kernel flow
+	// control, allowing us to capture ^S and ^Q too.
+	// There's no need to reset at end of scope btw because RealTimeConsoleInput's dtor
+	// resets to original state, saved before we make this change anyway.
+	{
+		import core.sys.posix.termios;
+		// padding because I'm not sure druntime's termios is the correct size
+		ubyte[128] padding;
+		termios old;
+		ubyte[128] padding2;
+		tcgetattr(0 /* terminal.fdIn */, &old);
+		old.c_iflag &= ~(IXON | IXOFF);
+		tcsetattr(0, TCSANOW, &old);
+	}
+
 	// then all we do is forward data to/from stdin to the pipe
 	import core.stdc.errno;
 	import core.sys.posix.unistd;
@@ -503,49 +518,83 @@ int nextScreenBackwards(ref Session session) {
 	return session.activeScreen;
 }
 
+void attach(Terminal* terminal, ref Session session, string sname) {
+	int position = -1;
+	foreach(idx, child; session.children)
+		if(child.socket is null) {
+			position = idx;
+			break;
+		}
+	if(position == -1) {
+		position = session.children.length;
+		session.children ~= ChildTerminal();
+	}
+
+	// spin off the child process
+
+	auto newSocket = connectTo(sname);
+	if(newSocket) {
+		session.children[position] = ChildTerminal(newSocket, sname, sname);
+		setActiveScreen(terminal, session, position);
+	}
+}
+
 void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Socket socket) {
 	// FIXME: UI stuff
-	static int commandLinePosition = -1;
-	static dchar[256] commandLineBuffer;
-	static dchar[] commandLine;
 	static bool escaping;
+	static bool gettingCommandLine;
+	static LineGetter lineGetter;
 	
-	if(commandLine is null)
-		commandLine = commandLineBuffer[];
-
 	InputMessage im;
 	im.eventLength = im.sizeof;
 	InputMessage* eventToSend;
+
+
+	if(gettingCommandLine) {
+		if(!lineGetter.workOnLine(event)) {
+			gettingCommandLine = false;
+			auto cmdLine = lineGetter.finishGettingLine();
+
+			import std.string;
+			auto args = split(cmdLine, " ");
+			if(args.length)
+			switch(args[0]) {
+				case "attach":
+					attach(terminal, session, args.length > 1 ? args[1] : null);
+				break;
+				default:
+			}
+
+			outputPaused = false;
+			forceRedraw(terminal, session);
+		}
+
+		return;
+	}
+
+	void triggerCommandLine(string text = "") {
+		terminal.moveTo(0, terminal.height - 1);
+		terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.alwaysSend, true);
+		terminal.write(":");
+		foreach(i; 1 .. terminal.width)
+			terminal.write(" ");
+		terminal.moveTo(1, terminal.height - 1);
+		gettingCommandLine = true;
+		if(lineGetter is null)
+			lineGetter = new LineGetter(terminal);
+		lineGetter.startGettingLine();
+		lineGetter.addString(text);
+		outputPaused = true;
+
+		if(text.length)
+			lineGetter.redraw();
+	}
+
 	final switch(event.type) {
 		case InputEvent.Type.CharacterEvent:
 			auto ce = event.get!(InputEvent.Type.CharacterEvent);
 			if(ce.eventType == CharacterEvent.Type.Released)
 				return;
-
-			if(commandLinePosition >= 0) {
-				switch(ce.character) {
-					case 10:
-						auto cmdLine = commandLine[0 .. commandLinePosition];
-						commandLinePosition = -1;
-						outputPaused = false;
-						forceRedraw(terminal, session);
-						terminal.write(cmdLine);
-					break;
-					case 8:
-						if(commandLinePosition)
-							commandLinePosition--;
-						terminal.write(ce.character);
-					break;
-					default:
-						if(commandLinePosition >= commandLine.length)
-							commandLine.length = commandLine.length * 2;
-
-						commandLine[commandLinePosition++] = ce.character;
-						terminal.write(ce.character);
-				}
-
-				return;
-			}
 
 			if(escaping) {
 				// C-a C-a toggles active screens quickly
@@ -584,35 +633,13 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 						// list everything and give ui to choose
 					break;
 					case ':':
-						terminal.moveTo(0, terminal.height - 1);
-						terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.alwaysSend, true);
-						terminal.write(": ");
-						foreach(i; 2 .. terminal.width)
-							terminal.write(" ");
-						terminal.moveTo(2, terminal.height - 1);
-						commandLinePosition = 0;
-						outputPaused = true;
+						triggerCommandLine();
 					break;
 					case 'c':
-						int position = -1;
-						foreach(idx, child; session.children)
-							if(child.socket is null) {
-								position = idx;
-								break;
-							}
-						if(position == -1) {
-							position = session.children.length;
-							session.children ~= ChildTerminal();
-						}
-
-						// spin off the child process
-
-						string sname;
-						auto newSocket = connectTo(sname);
-						if(newSocket) {
-							session.children[position] = ChildTerminal(newSocket, sname, sname);
-							setActiveScreen(terminal, session, position);
-						}
+						attach(terminal, session, null);
+					break;
+					case 'C':
+						triggerCommandLine("attach ");
 					break;
 					case '0':
 					..
@@ -743,6 +770,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 }
 
 void forceRedraw(Terminal* terminal, ref Session session) {
+	assert(!outputPaused);
 	setActiveScreen(terminal, session, session.activeScreen, true);
 }
 

@@ -11,6 +11,8 @@
 	The windows version expects serverside.d to be running on the other side and needs plink.exe available to speak ssh.
 */
 
+// FIXME: blue text under the cursor is virtually impossible to see.
+
 enum string[dchar] altMappings = [
 	'a' : "Cool!",
 	'A' : "Boss",
