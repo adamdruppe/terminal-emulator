@@ -127,6 +127,7 @@ void main(string[] args) {
 		auto term = new TerminalEmulatorWindow(master, (args.length > 1) ? to!int(args[1]) : 0);
 		import arsd.eventloop;
 		loop();
+		// 
 	}
 
 	try {

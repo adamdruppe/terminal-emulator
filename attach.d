@@ -15,6 +15,11 @@
 	C-a C: attach a specific screen to the session
 
 	C-a t: toggle taskbar. The taskbar will show a tab in green if it has a beep.
+
+	C-a <colon>: start command line
+		attach socket_name
+
+	You can edit session files in ~/.detachable-terminals with a text editor.
 +/
 module arsd.terminalemulatorattachutility;
 
@@ -234,6 +239,14 @@ void main(string[] args) {
 	if(socket is null)
 		return;
 
+	/*
+	// sets the icon, if set
+	if(session.icon.length) {
+		import arsd.terminalextensions;
+		changeWindowIcon(&terminal, session.icon);
+	}
+	*/
+
 	while(running) {
 		terminal.flush();
 		ubyte[4096] buffer;
@@ -285,6 +298,7 @@ void main(string[] args) {
 
 					/* read just for stuff in the background like bell or title change */
 					int lastEsc = -1;
+					int cut1 = 0, cut2 = 0;
 					foreach(bidx, b; buffer[0 .. len]) {
 						if(b == '\033')
 							lastEsc = bidx;
@@ -292,6 +306,8 @@ void main(string[] args) {
 						if(b == '\007') {
 							if(lastEsc != -1) {
 								auto pieces = cast(char[]) buffer[lastEsc .. bidx];
+								cut1 = lastEsc;
+								cut2 = 0;
 								lastEsc = -1;
 
 								// anything longer is just unreasonable
@@ -299,6 +315,8 @@ void main(string[] args) {
 								if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
 									child.title = pieces[4 .. $].idup;
 									redrawTaskbar = true;
+
+									cut2 = bidx;
 								}
 							}
 							if(child.socket !is socket) {
@@ -312,14 +330,28 @@ void main(string[] args) {
 					// to the actual terminal so the user can see it too
 					if(!outputPaused && child.socket is socket) {
 						auto toWrite = buffer[0 .. len];
-						while(len) {
-							if(!debugMode) {
-								auto wrote = write(1, toWrite.ptr, len);
-								if(wrote <= 0)
-									throw new Exception("write");
-								toWrite = toWrite[wrote .. $];
-								len -= wrote;
-							} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+						void writeOut(ubyte[] toWrite) {
+							auto len = toWrite.length;
+							while(len) {
+								if(!debugMode) {
+									auto wrote = write(1, toWrite.ptr, len);
+									if(wrote <= 0)
+										throw new Exception("write");
+									toWrite = toWrite[wrote .. $];
+									len -= wrote;
+								} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+							}
+						}
+
+						// FIXME
+						if(false && cut2 > cut1) {
+							// cut1 .. cut2 should be sliced out of the final output
+							// a title change isn't necessarily desirable directly since
+							// we do it in the session
+							writeOut(buffer[0 .. cut1]);
+							writeOut(buffer[cut2 + 1 .. $]);
+						} else {
+							writeOut(buffer[0 .. len]);
 						}
 					}
 				}
@@ -440,9 +472,13 @@ Socket connectTo(ref string sname, in bool spawn = true) {
 
 
 void drawTaskbar(Terminal* terminal, ref Session session) {
+	static string lastTitleDrawn;
 	bool anyDemandAttention = false;
 	if(session.showingTaskbar) {
 		terminal.writeStringRaw("\0337"); // save cursor
+		scope(exit) {
+			terminal.writeStringRaw("\0338"); // restore cursor
+		}
 
 		int spaceRemaining = terminal.width;
 		terminal.moveTo(0, terminal.height - 1);
@@ -487,14 +523,24 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 		foreach(i; 0 .. spaceRemaining)
 			terminal.write(" ");
 		terminal.write("X");
-
-		terminal.writeStringRaw("\0338"); // restore cursor
 	}
 
 	if(anyDemandAttention) {
 		 import std.process;
 		 if(environment["TERM"] != "linux")
 			terminal.writeStringRaw("\033]5001;1\007");
+	}
+
+	string titleToDraw;
+	if(session.title.length)
+		titleToDraw = session.title ~ " - " ~ session.children[session.activeScreen].title;
+	else
+		titleToDraw = session.children[session.activeScreen].title;
+
+	// FIXME
+	if(true || lastTitleDrawn != titleToDraw) {
+		lastTitleDrawn = titleToDraw;
+		terminal.setTitle(titleToDraw);
 	}
 }
 

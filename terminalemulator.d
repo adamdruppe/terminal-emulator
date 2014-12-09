@@ -650,7 +650,7 @@ class TerminalEmulator {
 				esc ~= b;
 
 				if(esc.length == 1 && esc[0] == '7') {
-					savedCursors ~= cursorPosition;
+					pushSavedCursor(cursorPosition);
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 1 && esc[0] == 'M') {
@@ -925,12 +925,18 @@ class TerminalEmulator {
 
 	private CursorPosition popSavedCursor() {
 		CursorPosition pos;
+		//import std.stdio; writeln("popped");
 		if(savedCursors.length) {
 			pos = savedCursors[$-1];
 			savedCursors = savedCursors[0 .. $-1];
 			savedCursors.assumeSafeAppend(); // we never keep references elsewhere so might as well reuse the memory as much as we can
 		}
 		return pos;
+	}
+
+	private void pushSavedCursor(CursorPosition pos) {
+		//import std.stdio; writeln("pushed");
+		savedCursors ~= pos;
 	}
 
 	/* FIXME: i want these to be private */
@@ -1677,7 +1683,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								case 1049:
 									// Save cursor as in DECSC and use Alternate Screen Buffer, clearing it first.
 									alternateScreenActive = true;
-									savedCursors ~= cursorPosition;
+									pushSavedCursor(cursorPosition);
 									cls();
 								break;
 								case 1000:
@@ -1705,7 +1711,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									// enable utf-8 mouse mode
 								break;
 								case 1048:
-									savedCursors ~= cursorPosition;
+									pushSavedCursor(cursorPosition);
 								break;
 								case 2004:
 									bracketedPasteMode = true;
