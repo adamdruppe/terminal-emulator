@@ -237,7 +237,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 		protected override void copyToClipboard(string text) {
 			simpledisplay.setClipboardText(simpleWindowConsole, text);
 		}
-		protected override void pasteFromClipboard(void delegate(string) dg) {
+		protected override void pasteFromClipboard(void delegate(in char[]) dg) {
 			simpledisplay.getClipboardText(simpleWindowConsole, dg);
 		}
 		protected override void changeCursorStyle(CursorStyle s) {

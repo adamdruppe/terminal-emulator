@@ -58,7 +58,7 @@ class TerminalEmulator {
 	protected abstract void sendToApplication(const(void)[]); /// send some data to the information
 
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
-	protected abstract void pasteFromClipboard(void delegate(string)); /// requests a paste. we pass it a delegate that should accept the data
+	protected abstract void pasteFromClipboard(void delegate(in char[])); /// requests a paste. we pass it a delegate that should accept the data
 
 	/// Signal the UI that some attention should be given, e.g. blink the taskbar or sound the bell.
 	/// The default is to ignore the demand by instantly acknowledging it - if you override this, do NOT call super().
@@ -78,7 +78,7 @@ class TerminalEmulator {
 	// alt + f5 is ^[[15;3~
 	// alt+shift+f5 is ^[[15;4~
 
-	public void sendPasteData(string data) {
+	public void sendPasteData(in char[] data) {
 		if(bracketedPasteMode)
 			sendToApplication("\033[200~");
 
@@ -2193,7 +2193,7 @@ mixin template ForwardVirtuals(alias writer) {
 				// idk why the cast is needed here
 		writer("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
 	}
-	protected override void pasteFromClipboard(void delegate(string) dg) {
+	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
 		// this is a slight extension. xterm invented the string - it means request the primary selection -
 		// but it generally doesn't actually get a reply. so i'm using it to request the primary which will be
 		// sent as a pasted strong.

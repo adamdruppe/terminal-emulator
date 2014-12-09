@@ -209,7 +209,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 				break;
 				case InputMessage.Type.DataPasted:
-					// FIXME
+					sendPasteData(im.pasteEvent.pastedText.ptr[0 .. im.pasteEvent.pastedTextLength]);
 				break;
 				case InputMessage.Type.RedrawNow:
 					connectionActive = true;

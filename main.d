@@ -491,7 +491,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			setPrimarySelection(window, text);
 	}
 
-	protected override void pasteFromClipboard(void delegate(string) dg) {
+	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
 		static if(UsingSimpledisplayX11)
 			getPrimarySelection(window, dg);
 		else

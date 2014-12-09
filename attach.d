@@ -757,9 +757,19 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 		break;
 		case InputEvent.Type.PasteEvent:
 			auto ev = event.get!(InputEvent.Type.PasteEvent);
-			assert(0);
-			//sendPasteData(ev.pastedText);
-			// FIXME
+			auto data = new ubyte[](ev.pastedText.length + InputMessage.sizeof);
+			auto msg = cast(InputMessage*) data.ptr;
+			msg.pasteEvent.pastedTextLength = ev.pastedText.length;
+
+			terminal.writeln(ev.pastedText);
+
+			// built-in array copy complained about byte overlap. Probably alignment or something.
+			foreach(i, b; ev.pastedText)
+				msg.pasteEvent.pastedText.ptr[i] = b;
+
+			msg.type = InputMessage.Type.DataPasted;
+			msg.eventLength = data.length;
+			eventToSend = msg;
 		break;
 		case InputEvent.Type.MouseEvent:
 			auto me = event.get!(InputEvent.Type.MouseEvent);
