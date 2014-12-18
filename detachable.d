@@ -109,7 +109,9 @@ void detachableMain(string[] args) {
 		unlink(toStringz(socketFileName(sname)));
 		close(master);
 	}
-	startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
+	import std.process;
+	auto cmd = environment.get("SHELL", "/bin/bash");
+	startChild!startup(args.length > 2 ? args[2] : cmd, args.length > 2 ? args[2 .. $] : [cmd]);
 }
 
 
@@ -262,6 +264,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 	bool connectionActive = false;
 
 	bool lastDrawAlternativeScreen;
+	// FIXME: a lot of code duplication between this and nestedterminalemulator
 	void redraw(bool forceRedraw = false) {
 		if(socket is null || !connectionActive)
 			return;
@@ -282,7 +285,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		terminal._currentBackground = -1;
 		bool isFirst = true;
 
-		terminal.hideCursor();
+		if(cursorShowing)
+			terminal.autoHideCursor();
+		else
+			terminal.hideCursor();
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			ushort tfg, tbg;
@@ -326,6 +332,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					tbg &= 0xff0f;
 
 					terminal.color(tfg, tbg, terminal_module.ForceOption.automatic, reverse);
+					terminal.underline = cell.attributes.underlined;
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {
 				}
@@ -343,7 +350,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 		if(cursorShowing) {
 			terminal.moveTo(cursorX, cursorY, forceRedraw ? terminal_module.ForceOption.alwaysSend : terminal_module.ForceOption.automatic);
-			terminal.showCursor();
+			terminal.autoShowCursor();
 		}
 
 		lastDrawAlternativeScreen = alternateScreenActive;

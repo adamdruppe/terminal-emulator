@@ -31,6 +31,34 @@ struct CustomGlyph {
 	dchar substitute;
 }
 
+void unknownEscapeSequence(in char[] esc) {
+	import std.file;
+	version(Posix)
+	debug append("/tmp/arsd-te-bad-esc-sequences.txt", esc ~ "\n");
+}
+
+// This is used for the double-click word selection
+bool isWordSeparator(dchar ch) {
+	return ch == ' ' || ch == '"' || ch == '<' || ch == '>';
+}
+
+struct ScopeBuffer(T, size_t maxSize) {
+	T[maxSize] buffer;
+	size_t length;
+	T[] opSlice() { return buffer[0 .. length]; }
+	void opOpAssign(string op : "~")(in T rhs) {
+		buffer[this.length++] = rhs;
+	}
+	void opOpAssign(string op : "~")(in T[] rhs) {
+		buffer[this.length .. this.length + rhs.length] = rhs[];
+		this.length += rhs.length;
+	}
+	void opAssign(in T[] rhs) {
+		buffer[0 .. rhs.length] = rhs[];
+		this.length = rhs.length;
+	}
+}
+
 /**
 	An abstract class that does terminal emulation. You'll have to subclass it to make it work.
 
@@ -55,7 +83,7 @@ class TerminalEmulator {
 
 	protected abstract void changeTextAttributes(TextAttributes); /// current text output attributes
 	protected abstract void soundBell(); /// sounds the bell
-	protected abstract void sendToApplication(const(void)[]); /// send some data to the information
+	protected abstract void sendToApplication(scope const(void)[]); /// send some data to the information
 
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
 	protected abstract void pasteFromClipboard(void delegate(in char[])); /// requests a paste. we pass it a delegate that should accept the data
@@ -72,7 +100,7 @@ class TerminalEmulator {
 		attentionDemanded = false;
 	}
 
-	// I believe \033[50~ and up are available for extensions everywhere.
+	// I believe \033[50buffer[] and up are available for extensions everywhere.
 	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
 	// apparently shifted F5 is ^[[15;2~
 	// alt + f5 is ^[[15;3~
@@ -151,7 +179,12 @@ class TerminalEmulator {
 			if(mouseButtonReleaseTracking) {
 				int b = baseEventCode;
 				b |= 3; // always send none / button released
-				sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (termX+1 + 32) ~ cast(char) (termY+1 + 32));
+				ScopeBuffer!(char, 16) buffer;
+				buffer ~= "\033[M";
+				buffer ~= cast(char) (b | 32);
+				buffer ~= cast(char) (termX+1 + 32);
+				buffer ~= cast(char) (termY+1 + 32);
+				sendToApplication(buffer[]);
 			}
 		}
 
@@ -161,7 +194,12 @@ class TerminalEmulator {
 				lastDragX = termX;
 				if(mouseMotionTracking || (mouseButtonMotionTracking && button)) {
 					int b = baseEventCode;
-					sendToApplication("\033[M" ~ cast(char) ((b | 32) + 32) ~ cast(char) (termX+1 + 32) ~ cast(char) (termY+1 + 32));
+					ScopeBuffer!(char, 16) buffer;
+					buffer ~= "\033[M";
+					buffer ~= cast(char) ((b | 32) + 32);
+					buffer ~= cast(char) (termX+1 + 32);
+					buffer ~= cast(char) (termY+1 + 32);
+					sendToApplication(buffer[]);
 				}
 
 				if(dragging) {
@@ -223,7 +261,14 @@ class TerminalEmulator {
 				int x = termX;
 				int y = termY;
 				x++; y++; // applications expect it to be one-based
-				sendToApplication("\033[M" ~ cast(char) (b | 32) ~ cast(char) (x + 32) ~ cast(char) (y + 32));
+
+				ScopeBuffer!(char, 16) buffer;
+				buffer ~= "\033[M";
+				buffer ~= cast(char) (b | 32);
+				buffer ~= cast(char) (x + 32);
+				buffer ~= cast(char) (y + 32);
+
+				sendToApplication(buffer[]);
 			} else {
 				if(button == MouseButton.middle) {
 					pasteFromClipboard(&sendPasteData);
@@ -254,11 +299,11 @@ class TerminalEmulator {
 					} else if(consecutiveClicks == 2) {
 						selectionStart = termY * screenWidth + termX;
 						selectionEnd = selectionStart;
-						while(selectionStart > 0 && (*activeScreen)[selectionStart-1].ch != ' ') {
+						while(selectionStart > 0 && !isWordSeparator((*activeScreen)[selectionStart-1].ch)) {
 							selectionStart--;
 						}
 
-						while(selectionEnd < (*activeScreen).length && (*activeScreen)[selectionEnd].ch != ' ') {
+						while(selectionEnd < (*activeScreen).length && !isWordSeparator((*activeScreen)[selectionEnd].ch)) {
 							selectionEnd++;
 						}
 
@@ -332,7 +377,8 @@ class TerminalEmulator {
 			if(!anyModifier || applicationCursorKeys)
 				sendToApplication(s); // FIXME: applicationCursorKeys can still be shifted i think but meh
 			else {
-				string modifierNumber;
+				ScopeBuffer!(char, 16) modifierNumber;
+				char otherModifier = 0;
 				if(shift && alt && ctrl) modifierNumber = "8";
 				if(alt && ctrl && !shift) modifierNumber = "7";
 				if(shift && ctrl && !alt) modifierNumber = "6";
@@ -344,7 +390,7 @@ class TerminalEmulator {
 				// windows is an extension
 				if(windows) {
 					if(modifierNumber.length)
-						modifierNumber = "2" ~ modifierNumber;
+						otherModifier = '2';
 					else
 						modifierNumber = "20";
 					/* // the below is what we're really doing
@@ -365,8 +411,17 @@ class TerminalEmulator {
 					keyNumber = "1";
 					terminator = s[$ - 1];
 				}
+
+				ScopeBuffer!(char, 32) buffer;
+				buffer ~= "\033[";
+				buffer ~= keyNumber;
+				buffer ~= ";";
+				if(otherModifier)
+					buffer ~= otherModifier;
+				buffer ~= modifierNumber[];
+				buffer ~= terminator;
 				// the xterm style is last bit tell us what it is
-				sendToApplication("\033[" ~ keyNumber ~ ";" ~ modifierNumber ~ terminator);
+				sendToApplication(buffer[]);
 			}
 		}
 
@@ -395,7 +450,7 @@ class TerminalEmulator {
 			case Key.F6: sendToApplicationModified("\033[17~"); break;
 			case Key.F7: sendToApplicationModified("\033[18~"); break;
 			case Key.F8: sendToApplicationModified("\033[19~"); break;
-			case Key.F9: sendToApplicationModified("\033[20"); break;
+			case Key.F9: sendToApplicationModified("\033[20~"); break;
 			case Key.F10: sendToApplicationModified("\033[21~"); break;
 			case Key.F11: sendToApplicationModified("\033[23~"); break;
 			case Key.F12: sendToApplicationModified("\033[24~"); break;
@@ -418,7 +473,8 @@ class TerminalEmulator {
 	}
 
 	// might be worth doing the redraw magic in here too.
-	protected void drawTextSection(int x, int y, TextAttributes attributes, in dchar[] text, bool isAllSpaces) {
+	// FIXME: not implemented
+	@disable protected void drawTextSection(int x, int y, TextAttributes attributes, in dchar[] text, bool isAllSpaces) {
 		// if you implement this it will always give you a continuous block on a single line. note that text may be a bunch of spaces, in that case you can just draw the bg color to clear the area
 		// or you can redraw based on the invalidated flag on the buffer
 	}
@@ -644,6 +700,12 @@ class TerminalEmulator {
 			}
 
 			if(readingEsc) {
+				if(b == 27) {
+					// an esc in the middle of a sequence will
+					// cancel the first one
+					esc = null;
+				}
+
 				if(b == 10) {
 					readingEsc = false;
 				}
@@ -1171,11 +1233,26 @@ class TerminalEmulator {
 			}
 		}
 
+		void clearSelection() {
+			foreach(ref tc; alternateScreenActive ? alternateScreen : normalScreen)
+				if(tc.selected) {
+					tc.selected = false;
+					tc.invalidated = true;
+				}
+			selectionStart = 0;
+			selectionEnd = 0;
+		}
 
 		void addOutput(TerminalCell tc) {
 			if(alternateScreenActive) {
+				if(alternateScreen[cursorY * screenWidth + cursorX].selected) {
+					clearSelection();
+				}
 				alternateScreen[cursorY * screenWidth + cursorX] = tc;
 			} else {
+				if(normalScreen[cursorY * screenWidth + cursorX].selected) {
+					clearSelection();
+				}
 				normalScreen[cursorY * screenWidth + cursorX] = tc;
 
 				TerminalCell plain;
@@ -1348,7 +1425,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							demandAttention();
 						break;
 						default:
-							assert(0, "" ~ cast(char) esc[1]);
+							unknownEscapeSequence("" ~ cast(char) esc[1]);
 					}
 				}
 			} else if(esc[0] == '[' && esc.length > 1) {
@@ -1360,7 +1437,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case '5': sendToApplication("\033[0n"); break;
 							// request cursor position
 							case '6': sendToApplication(format("\033[%d;%dR", cursorY + 1, cursorX + 1)); break;
-							default: assert(0, cast(string) esc);
+							default: unknownEscapeSequence(cast(string) esc);
 						}
 					break;
 					case 'A': if(cursorY) cursorY = cursorY - getArgs(1)[0]; break;
@@ -1422,9 +1499,12 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						plain.ch = ' ';
 						plain.attributes = currentAttributes;
 
-						for(int i = start; i < end; i++)
+						for(int i = start; i < end; i++) {
+							if(ASS[cursorY][i].selected)
+								clearSelection();
 							ASS[cursorY]
 								[i] = plain;
+						}
 					break;
 					case 'g':
 						auto arg = getArgs(0)[0];
@@ -1489,6 +1569,12 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 1:
 								currentAttributes.bold = true;
 							break;
+							case 2:
+								// faint
+							break;
+							case 3:
+								// italic
+							break;
 							case 4:
 								currentAttributes.underlined = true;
 							break;
@@ -1503,6 +1589,10 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							break;
 							case 22:
 								currentAttributes.bold = false;
+								// also not faint
+							break;
+							case 23:
+								// not italic
 							break;
 							case 24:
 								currentAttributes.underlined = false;
@@ -1594,7 +1684,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								currentAttributes.backgroundIndex = dflt.backgroundIndex;
 							break;
 							default:
-								assert(0, cast(string) esc);
+								unknownEscapeSequence(cast(string) esc);
 						}
 					break;
 					case 'J':
@@ -1615,13 +1705,13 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							break;
 							case 1:
 								// erase above
-								assert(0, "FIXME");
+								unknownEscapeSequence("FIXME");
 							break;
 							case 2:
 								// erase all
 								cls();
 							break;
-							default: assert(0, cast(string) esc);
+							default: unknownEscapeSequence(cast(string) esc);
 						}
 					break;
 					case 'r':
@@ -1642,7 +1732,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 34:
 								// no idea. vim inside screen sends it
 							break;
-							default: assert(0, cast(string) esc);
+							default: unknownEscapeSequence(cast(string) esc);
 						}
 						else
 					//import std.stdio; writeln("h magic ", cast(string) esc);
@@ -1725,7 +1815,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									cursorShowing = true;
 								break;
 								/* Extensions */
-								default: assert(0, cast(string) esc);
+								default: unknownEscapeSequence(cast(string) esc);
 							}
 					break;
 					case 'l':
@@ -1739,7 +1829,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 34:
 								// no idea. vim inside screen sends it
 							break;
-							default: assert(0, cast(string) esc);
+							default: unknownEscapeSequence(cast(string) esc);
 						}
 						else
 						foreach(arg; getArgsBase(2, null))
@@ -1795,7 +1885,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								case 25:
 									cursorShowing = false;
 								break;
-								default: assert(0, cast(string) esc);
+								default: unknownEscapeSequence(cast(string) esc);
 							}
 					break;
 					case 'X':
@@ -1824,10 +1914,14 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 
 						foreach(cnt; 0 .. count) {
 							for(int i = cursorX; i < this.screenWidth-1; i++) {
+								if(ASS[cursorY][i].selected)
+									clearSelection();
 								ASS[cursorY][i] = ASS[cursorY][i + 1];
 								ASS[cursorY][i].invalidated = true;
 							}
 
+							if(ASS[cursorY][this.screenWidth - 1].selected)
+								clearSelection();
 							ASS[cursorY][this.screenWidth-1].ch = ' ';
 							ASS[cursorY][this.screenWidth-1].invalidated = true;
 						}
@@ -1850,10 +1944,12 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						sendToApplication("\033[>0;138;0c");
 					break;
 					default:
-						assert(0, "" ~ cast(string) esc);
+						// [42\esc] seems to have gotten here once somehow
+						// also [24\esc]
+						unknownEscapeSequence("" ~ cast(string) esc);
 				}
 			} else {
-				assert(0, cast(string) esc);
+				unknownEscapeSequence(cast(string) esc);
 			}
 		}
 	}
@@ -1930,11 +2026,12 @@ version(Posix) {
 		void childdead(int) {
 			childrenAlive--;
 
+			wait(null);
+
 			try {
-			import arsd.eventloop;
-			if(childrenAlive == 0)
-				wait(null);
-				exit();
+				import arsd.eventloop;
+				if(childrenAlive <= 0)
+					exit();
 			} catch(Exception e){}
 		}
 
@@ -1953,7 +2050,19 @@ version(Posix) {
 
 			import core.sys.posix.unistd;
 
-			execl("/bin/bash", "/bin/bash", null); // FIXME
+			import core.stdc.stdlib;
+			char** argv = cast(char**) malloc((char*).sizeof * (args.length + 1));
+			if(argv is null) throw new Exception("malloc");
+			foreach(i, arg; args) {
+				argv[i] = cast(char*) malloc(arg.length + 1);
+				if(argv[i] is null) throw new Exception("malloc");
+				argv[i][0 .. arg.length] = arg[];
+				argv[i][arg.length] = 0;
+			}
+
+			argv[args.length] = null;
+
+			execv(argv[0], argv);
 		} else {
 			childrenAlive = 1;
 			masterFunc(master);
@@ -2244,7 +2353,7 @@ mixin template PtySupport(alias resizeHelper) {
 		}
 	}
 
-	protected override void sendToApplication(const(void)[] data) {
+	protected override void sendToApplication(scope const(void)[] data) {
 		version(Windows) {
 			import std.conv;
 			uint written;

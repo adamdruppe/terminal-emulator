@@ -13,6 +13,8 @@
 
 	Windows compile:
 	dmd nestedterminalemulator.d terminalemulator.d arsd\terminal.d arsd\color.d
+
+	FIXME: underlining
 */
 
 import terminal;
@@ -92,7 +94,9 @@ void main(string[] args) {
 
 	}
 
-	startChild!startup(args.length > 1 ? args[1] : "/bin/bash", args.length > 1 ? args[1 .. $] : ["/bin/bash"]);
+	import std.process;
+	auto cmd = environment.get("SHELL", "/bin/bash");
+	startChild!startup(args.length > 1 ? args[1] : cmd, args.length > 1 ? args[1 .. $] : [cmd]);
 }
 
 
@@ -123,6 +127,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 		this.stdin = stdin;
 		this.stdout = stdout;
 		this.terminal = terminal;
+		//this.rtInput = rtInput;
+
 		//this.rtInput = rtInput;
 
 		super(terminal.width, terminal.height);
@@ -166,8 +172,10 @@ class NestedTerminalEmulator : TerminalEmulator {
 	import std.conv;
 		auto te = this;
 		final switch(event.type) {
-				// FIXME: what about Ctrl+Z? maybe terminal.d should catch that signal too. SIGSTOP i think tho could be SIGTSTP
-				// and SIGHUP would perhaps be good to handle too
+			// FIXME: what about Ctrl+Z? maybe terminal.d should catch that signal too. SIGSTOP i think tho could be SIGTSTP
+			case InputEvent.Type.HangupEvent:
+				exit();
+			break;
 			case InputEvent.Type.CharacterEvent:
 				auto ce = event.get!(InputEvent.Type.CharacterEvent);
 				if(ce.eventType == CharacterEvent.Type.Released)
@@ -182,6 +190,10 @@ class NestedTerminalEmulator : TerminalEmulator {
 			case InputEvent.Type.SizeChangedEvent:
 				auto ce = event.get!(InputEvent.Type.SizeChangedEvent);
 				te.resizeTerminal(ce.newWidth, ce.newHeight);
+			break;
+			case InputEvent.Type.EndOfFileEvent:
+				// FIXME: is this correct?
+				te.sendToApplication("\004");
 			break;
 			case InputEvent.Type.UserInterruptionEvent:
 				te.sendToApplication("\003");
@@ -299,12 +311,16 @@ class NestedTerminalEmulator : TerminalEmulator {
 	import arsd.eventloop;
 
 	bool lastDrawAlternativeScreen;
+	// FIXME: a lot of code duplication between this and detachable
 	void redraw(bool forceRedraw = false) {
 		int x, y;
 		if(terminal is null)
 			return;
 
-		terminal.hideCursor();
+		if(cursorShowing)
+			terminal.autoHideCursor();
+		else
+			terminal.hideCursor();
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			ushort tfg, tbg;
@@ -367,9 +383,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 					// and xterm 256 color too can just forward it. and of course if we're nested in ourselves, we can just use
 					// a 24 bit extension command.
 					tfg &= 0xff0f;
-					tbg &= 0xff0f;
-
 					terminal.color(tfg, tbg, ForceOption.automatic, reverse);
+					terminal.underline = cell.attributes.underlined;
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {
 				}
@@ -387,7 +402,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 
 		if(cursorShowing) {
 			terminal.moveTo(cursorX, cursorY);
-			terminal.showCursor();
+			terminal.autoShowCursor();
 		}
 
 		lastDrawAlternativeScreen = alternateScreenActive;

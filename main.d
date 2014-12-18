@@ -13,9 +13,13 @@
 
 // FIXME: blue text under the cursor is virtually impossible to see.
 
+// You can edit this if you like to make the alt+keys do other stuff.
 enum string[dchar] altMappings = [
 	'a' : "Cool!",
 	'A' : "Boss",
+
+	'\'' : "\&ldquo;",
+	'\"' : "\&rdquo;",
 ];
 
 /*
@@ -131,7 +135,9 @@ void main(string[] args) {
 	}
 
 	try {
-		startChild!startup(args.length > 2 ? args[2] : "/bin/bash", args.length > 2 ? args[2 .. $] : ["/bin/bash"]);
+		import std.process;
+		auto cmd = environment.get("SHELL", "/bin/bash");
+		startChild!startup(args.length > 2 ? args[2] : cmd, args.length > 2 ? args[2 .. $] : [cmd]);
 	} catch(Throwable t) {
 		// we might not be run from a tty to print the message, so pop it up some other way.
 		// I'm lazy so i'll just call xmessage. good enough to pop it up in the gui environment
@@ -489,13 +495,15 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	protected override void copyToClipboard(string text) {
 		static if(UsingSimpledisplayX11)
 			setPrimarySelection(window, text);
+		else
+			setClipboardText(window, text);
 	}
 
 	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
 		static if(UsingSimpledisplayX11)
 			getPrimarySelection(window, dg);
 		else
-		{} // FIXME: use the clipboard
+			getClipboardText(window, dg);
 	}
 
 	void resizeImage() {
@@ -605,11 +613,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				return;
 
 			// debug stuff
-			if(ev.key == Key.F12) {
+			if((ev.modifierState & ModifierState.ctrl) && (ev.modifierState & ModifierState.shift) && ev.key == Key.F12) {
 				debugMode = !debugMode;
 				return;
 			}
 
+			version(none)
 			if(ev.key == Key.F11) {
 				import std.datetime;
 				auto r = benchmark!({

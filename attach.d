@@ -36,6 +36,11 @@ import std.socket;
 	FIXME: error messages aren't displayed when you attach and the socket cannot be opened
 	FIXME: SIGSTOP should be propagated too.
 
+	FIXME: activity/silence watching should make sense out of the box so default on doesn't annoy me
+	FIXME: when a session is remote attached, it steals all the screens. this causes the existing one
+	       to write out a blank session file, meaning it won't be stolen back easily. This should change
+	       so it is aware of the remote detach and just leaves things, or gracefully exits upon request.
+
 	Session file example:
 
 	title: foo
@@ -45,6 +50,19 @@ import std.socket;
 
 	FIXME: support icon changing and title changing and DEMANDS_ATTENTION support
 	FIXME: if a screen detaches because it is being attached somewhere else, we should note that somehow
+
+	FIXME: support the " key
+	FIXME: watch for change in silence automatically
+	FIXME: allow suppression of beeps
+
+
+	so what do i want for activity noticing...
+		if it has been receiving user input, give it a bigger time out
+
+		if there's been no output for a minute, consider it silent
+		if there has been output in the last minute, it is not silent
+
+		if it is less than a minute old, it is neither silent nor loud yet
 */
 
 struct Session {
@@ -55,6 +73,11 @@ struct Session {
 	string[] screens;
 	dchar escapeCharacter = 1;
 	bool showingTaskbar = true;
+
+	/// if set to true, screens are counted from zero when jumping with the number keys (like GNU screen)
+	/// otherwise, screens count from one. I like one because it is more convenient with the left hand
+	/// and the numbers match up visually with the tabs, but the zero based gnu screen habit is hard to break.
+	bool zeroBasedCounting;
 
 	// the filename
 	string sname;
@@ -73,6 +96,7 @@ struct Session {
 		file.writeln("cwd: ", cwd);
 		file.writeln("escapeCharacter: ", cast(dchar) (escapeCharacter + 'a' - 1));
 		file.writeln("showingTaskbar: ", showingTaskbar);
+		file.writeln("zeroBasedCounting: ", zeroBasedCounting);
 		file.writeln("screens: ", join(screens, " "));
 	}
 
@@ -99,12 +123,15 @@ struct Session {
 					escapeCharacter = decodeFront(rhs) + 1 - 'a';
 				break;
 				case "showingTaskbar": showingTaskbar = rhs == "true"; break;
+				case "zeroBasedCounting": zeroBasedCounting = rhs == "true"; break;
 				case "screens": screens = split(rhs.idup, " "); break;
 				default: continue;
 			}
 		}
 	}
 }
+
+import core.stdc.time;
 
 struct ChildTerminal {
 	Socket socket;
@@ -118,6 +145,10 @@ struct ChildTerminal {
 	// for mouse click detection
 	int x;
 	int x2;
+
+	// for detecting changes in output
+	time_t lastActivity;
+	bool lastWasSilent;
 }
 
 extern(C) nothrow static @nogc
@@ -263,7 +294,10 @@ void main(string[] args) {
 			}
 		}
 
-		auto ret = select(maxFd + 1, &rdfs, null, null, null);
+		timeval timeout;
+		timeout.tv_sec = 10;
+
+		auto ret = select(maxFd + 1, &rdfs, null, null, &timeout);
 		if(ret == -1) {
 			if(errno == 4) {
 				// FIXME: check interrupted and size event
@@ -274,16 +308,16 @@ void main(string[] args) {
 			else throw new Exception("select");
 		}
 
+		bool redrawTaskbar = false;
+
 		if(ret) {
-			bool redrawTaskbar = false;
 
 			if(FD_ISSET(0, &rdfs)) {
 				// the terminal is ready, we'll call next event here
 				handleEvent(&terminal, session, input.nextEvent(), socket);
 			}
 
-			foreach(ref child; session.children) {
-				if(child.socket !is null)
+			foreach(ref child; session.children) if(child.socket !is null) {
 				if(FD_ISSET(child.socket.handle, &rdfs)) {
 					// data from the pty should be forwarded straight out
 					int len = read(child.socket.handle, buffer.ptr, buffer.length);
@@ -311,7 +345,7 @@ void main(string[] args) {
 								lastEsc = -1;
 
 								// anything longer is just unreasonable
-								if(pieces.length > 4 && pieces.length < 60)
+								if(pieces.length > 4 && pieces.length < 120)
 								if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
 									child.title = pieces[4 .. $].idup;
 									redrawTaskbar = true;
@@ -331,8 +365,8 @@ void main(string[] args) {
 					if(!outputPaused && child.socket is socket) {
 						auto toWrite = buffer[0 .. len];
 						void writeOut(ubyte[] toWrite) {
-							auto len = toWrite.length;
-							while(len) {
+							int len = cast(int) toWrite.length;
+							while(len > 0) {
 								if(!debugMode) {
 									auto wrote = write(1, toWrite.ptr, len);
 									if(wrote <= 0)
@@ -354,12 +388,42 @@ void main(string[] args) {
 							writeOut(buffer[0 .. len]);
 						}
 					}
+
+					/+
+					/* there's still new activity here */
+					if(child.lastWasSilent && child.lastActivity) {
+						child.demandsAttention = true;
+						redrawTaskbar = true;
+						child.lastWasSilent = false;
+					}
+					child.lastActivity = time(null);
+					+/
+				} else {
+					/+
+					/* there was not any new activity, see if it has become silent */
+					if(child.lastActivity && !child.lastWasSilent && time(null) - child.lastActivity > 10) {
+						child.demandsAttention = true;
+						child.lastWasSilent = true;
+						redrawTaskbar = true;
+					}
+					+/
 				}
 			}
-
-			if(redrawTaskbar)
-				drawTaskbar(&terminal, session);
+		} else {
+			/+
+			// it timed out, everybody is silent now
+			foreach(ref child; session.children) {
+				if(!child.lastWasSilent && child.lastActivity) {
+					child.demandsAttention = true;
+					child.lastWasSilent = true;
+					redrawTaskbar = true;
+				}
+			}
+			+/
 		}
+
+		if(redrawTaskbar)
+			drawTaskbar(&terminal, session);
 	}
 
 	if(session.sname !is null) {
@@ -392,7 +456,8 @@ Socket connectTo(ref string sname, in bool spawn = true) {
 		import core.sys.posix.unistd;
 		if(auto pid = fork()) {
 			import std.conv;
-			sname = to!string(pid);
+			if(sname.length == 0)
+				sname = to!string(pid);
 			int tries = 3;
 			while(tries > 0 && socket is null) {
 				// give the child a chance to get started...
@@ -483,14 +548,14 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 		int spaceRemaining = terminal.width;
 		terminal.moveTo(0, terminal.height - 1);
 		//terminal.writeStringRaw("\033[K"); // clear line
-		terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.alwaysSend, true);
-		terminal.write("+ ");
+		terminal.color(Color.blue, Color.white, ForceOption.alwaysSend, true);
+		terminal.write("  "); //"+ ");
 		spaceRemaining-=2;
 		spaceRemaining--; // save space for the close button on the end
 
 		foreach(idx, ref child; session.children) {
 			child.x = terminal.width - spaceRemaining - 1;
-			terminal.color(Color.DEFAULT, child.demandsAttention ? Color.green : Color.DEFAULT, ForceOption.automatic, idx != session.activeScreen);
+			terminal.color(Color.blue, child.demandsAttention ? Color.green : Color.white, ForceOption.automatic, idx != session.activeScreen);
 			terminal.write(" ");
 			spaceRemaining--;
 
@@ -518,11 +583,11 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 			if(spaceRemaining == 0)
 				break;
 		}
-		terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.automatic, true);
+		terminal.color(Color.blue, Color.white, ForceOption.automatic, true);
 
 		foreach(i; 0 .. spaceRemaining)
 			terminal.write(" ");
-		terminal.write("X");
+		terminal.write(" ");//"X");
 	}
 
 	if(anyDemandAttention) {
@@ -637,6 +702,13 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 	}
 
 	final switch(event.type) {
+		case InputEvent.Type.EndOfFileEvent:
+			// assert(0);
+			// FIXME: is this right too?
+		break;
+		case InputEvent.Type.HangupEvent:
+			running = false;
+		break;
 		case InputEvent.Type.CharacterEvent:
 			auto ce = event.get!(InputEvent.Type.CharacterEvent);
 			if(ce.eventType == CharacterEvent.Type.Released)
@@ -677,6 +749,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 					break;
 					case '"':
 						// list everything and give ui to choose
+						// FIXME
 					break;
 					case ':':
 						triggerCommandLine();
@@ -691,10 +764,12 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 					..
 					case '9':
 						int num = cast(int) (ce.character - '0');
-						if(num == 0)
-							num = 9;
-						else
-							num--;
+						if(!session.zeroBasedCounting) {
+							if(num == 0)
+								num = 9;
+							else
+								num--;
+						}
 						setActiveScreen(terminal, session, num);
 					break;
 					default:

@@ -5,16 +5,38 @@ underlining is ugly
 
 sometimes scrolling up or opening lines in vim doesn't work right
 
-ALL my open emulators randomly die on X. This does not make sense as they
-are separate processes... but maybe they're all part of the same group or something and thus receive signals together. But what signal? Why is it sent? Seems to happen randomly when I switch workspaces.
-
-
-If any part of the selection changes, the whole selected text ought to become unselected. (It may remain on the clipboard though.)
-
 Nested terminal emulator inside screen inside terminal emulator loses the arrow keys.
+
+in attach, vim with dark bg lost the highlight of the active tab on Windows nested - vim tries to underline it. we'll have to support that somehow
+
+a lot of CPU is wasted when doing mplayer
+
+using mplayer and detaching in the middle of it seems to f things up... sometimes, maybe it has to do with a long running process instead
 
 
 FEATURE REQUESTS:
 	rectangular selection
 	window manager hints for resizing in cell-sized chunks
 	setting colors on the command line
+
+	bell enable/disable sequence (mutt's beeps annoy me but i like most beeps)
+
+	terminal emulator widget that can be embedded elsewhere
+	libssh2 support
+	scripting support???
+	use it in another program really easily to just pop up
+
+
+
+If I didn't write that event loop lib myself, would I have ever figured it out? If I did, would I have been able to fix it so easily?
+
+
+
+
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms686019%28v=vs.85%29.aspx
+http://www.libssh2.org/examples/
+http://www.libssh2.org/examples/ssh2.html
+http://www.libssh2.org/examples/x11.html
+http://report5.blogspot.com/2012/09/how-to-compile-libssh2-for-windows-with.html
+http://www.libssh2.org//libssh2_channel_process_startup.html
