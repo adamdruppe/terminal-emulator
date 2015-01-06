@@ -2127,7 +2127,7 @@ version(Posix) {
 
 			argv[args.length] = null;
 
-			execv(argv[0], argv);
+			core.sys.posix.unistd.execv(argv[0], argv);
 		} else {
 			childrenAlive = 1;
 			masterFunc(master);
