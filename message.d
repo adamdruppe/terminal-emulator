@@ -36,9 +36,15 @@ struct InputMessage {
 		// special commands
 		RedrawNow, // send all state over (perhaps should be merged with "active" and maybe send size changed info too. term as well?)
 
+
 		// FIXME: implement these
 		Inactive, // the user moved another screen to the front, stop redrawing (but still send new titles, icons, or bells)
 		Active, // the user moved you to the front, resume redrawing normally
+
+		// Initial connection things
+		RequestStatus, // requests status about the backend - pid, etc.
+		Attach, // attaches it and updates the status info
+		Detach,
 	}
 
 	// for modifiers
@@ -75,19 +81,38 @@ struct InputMessage {
 		char[1] pastedText;
 	}
 
+	struct AttachEvent {
+		int pid; // the pid of the attach instance
+		int sessionNameLength;
+		char[1] sessionName;
+	}
+
 	union {
 		MouseEvent mouseEvent;
 		KeyEvent keyEvent;
 		CharacterEvent characterEvent;
 		SizeEvent sizeEvent;
 		PasteEvent pasteEvent;
+		AttachEvent attachEvent;
 	}
 }
 
 /*
 struct OutputMessage {
-	ubyte type;
+	enum Type : ubyte {
+		DataOutput
+	}
+
+	Type type;
 	ushort length;
-	ubyte[1] data;
+
+	struct DataOutputEvent {
+		int dataLength;
+		ubyte[1] data;
+	}
+
+	union {
+		DataOutputEvent dataOutputEvent;
+	}
 }
 */

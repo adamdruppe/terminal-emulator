@@ -264,7 +264,7 @@ void main(string[] args) {
 
 	foreach(idx, child; session.children)
 		if(child.socket !is null) {
-			setActiveScreen(&terminal, session, idx, true);
+			setActiveScreen(&terminal, session, cast(int) idx, true);
 			break;
 		}
 	if(socket is null)
@@ -320,7 +320,7 @@ void main(string[] args) {
 			foreach(ref child; session.children) if(child.socket !is null) {
 				if(FD_ISSET(child.socket.handle, &rdfs)) {
 					// data from the pty should be forwarded straight out
-					int len = read(child.socket.handle, buffer.ptr, buffer.length);
+					auto len = read(child.socket.handle, buffer.ptr, cast(int) buffer.length);
 					if(len <= 0) {
 						// probably end of file or something cuz the child exited
 						// we should switch to the next possible screen
@@ -335,7 +335,7 @@ void main(string[] args) {
 					int cut1 = 0, cut2 = 0;
 					foreach(bidx, b; buffer[0 .. len]) {
 						if(b == '\033')
-							lastEsc = bidx;
+							lastEsc = cast(int) bidx;
 
 						if(b == '\007') {
 							if(lastEsc != -1) {
@@ -350,7 +350,7 @@ void main(string[] args) {
 									child.title = pieces[4 .. $].idup;
 									redrawTaskbar = true;
 
-									cut2 = bidx;
+									cut2 = cast(int) bidx;
 								}
 							}
 							if(child.socket !is socket) {
@@ -612,20 +612,20 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 int nextScreen(ref Session session) {
 	foreach(i; session.activeScreen + 1 .. session.children.length)
 		if(session.children[i].socket !is null)
-			return i;
+			return cast(int) i;
 	foreach(i; 0 .. session.activeScreen)
 		if(session.children[i].socket !is null)
-			return i;
+			return cast(int) i;
 	return session.activeScreen;
 }
 
 int nextScreenBackwards(ref Session session) {
 	foreach_reverse(i; 0 .. session.activeScreen)
 		if(session.children[i].socket !is null)
-			return i;
+			return cast(int) i;
 	foreach_reverse(i; session.activeScreen + 1 .. session.children.length)
 		if(session.children[i].socket !is null)
-			return i;
+			return cast(int) i;
 	return session.activeScreen;
 }
 
@@ -633,11 +633,11 @@ void attach(Terminal* terminal, ref Session session, string sname) {
 	int position = -1;
 	foreach(idx, child; session.children)
 		if(child.socket is null) {
-			position = idx;
+			position = cast(int) idx;
 			break;
 		}
 	if(position == -1) {
-		position = session.children.length;
+		position = cast(int) session.children.length;
 		session.children ~= ChildTerminal();
 	}
 
@@ -834,7 +834,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			auto ev = event.get!(InputEvent.Type.PasteEvent);
 			auto data = new ubyte[](ev.pastedText.length + InputMessage.sizeof);
 			auto msg = cast(InputMessage*) data.ptr;
-			msg.pasteEvent.pastedTextLength = ev.pastedText.length;
+			msg.pasteEvent.pastedTextLength = cast(int) ev.pastedText.length;
 
 			terminal.writeln(ev.pastedText);
 
@@ -843,7 +843,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				msg.pasteEvent.pastedText.ptr[i] = b;
 
 			msg.type = InputMessage.Type.DataPasted;
-			msg.eventLength = data.length;
+			msg.eventLength = cast(int) data.length;
 			eventToSend = msg;
 		break;
 		case InputEvent.Type.MouseEvent:
@@ -853,7 +853,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				if(me.eventType == MouseEvent.Type.Pressed)
 					foreach(idx, child; session.children) {
 						if(me.x >= child.x && me.x < child.x2) {
-							setActiveScreen(terminal, session, idx);
+							setActiveScreen(terminal, session, cast(int) idx);
 							break;
 						}
 					}
@@ -982,12 +982,12 @@ void closeSocket(Terminal* terminal, ref Session session, Socket socketToClose =
 
 	foreach(s; switchTo .. session.children.length)
 		if(session.children[s].socket !is null) {
-			switchTo = s;
+			switchTo = cast(int) s;
 			goto allSet;
 		}
 	foreach(s; 0 .. switchTo)
 		if(session.children[s].socket !is null) {
-			switchTo = s;
+			switchTo = cast(int) s;
 			goto allSet;
 		}
 

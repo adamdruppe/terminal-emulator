@@ -100,14 +100,20 @@ void detachableMain(string[] args) {
 		if(!exists(socketDirectoryName()))
 			mkdir(socketDirectoryName());
 		auto dte = new DetachableTerminalEmulator(master, socketFileName(sname), sname);
+		scope(exit) {
+			import core.sys.posix.unistd;
+			import std.string : toStringz;
+			dte.dispose();
+			unlink(toStringz(socketFileName(sname)));
+			close(master);
+		}
 
-		loop();
-
-		import core.sys.posix.unistd;
-		import std.string : toStringz;
-		dte.dispose();
-		unlink(toStringz(socketFileName(sname)));
-		close(master);
+		try
+			loop();
+		catch(Throwable e) {
+			import std.file;
+			append("/tmp/arsd-te-exceptions.txt", e.toString());
+		}
 	}
 	import std.process;
 	auto cmd = environment.get("SHELL", "/bin/bash");
@@ -117,6 +123,7 @@ void detachableMain(string[] args) {
 
 class DetachableTerminalEmulator : TerminalEmulator {
 	void writer(in void[] data) {
+		// FIXME: frame this data
 		if(socket !is null)
 			socket.send(data);
 	}
@@ -160,7 +167,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 			if(im.eventLength > got.length) {
 				// not enough.... gotta read more.
-				l2 = len;
+				l2 = cast(int) len;
 				goto get_more;
 			}
 
@@ -226,6 +233,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 				case InputMessage.Type.Inactive:
 					connectionActive = false;
 				break;
+				case InputMessage.Type.Detach:
+				case InputMessage.Type.Attach:
+				case InputMessage.Type.RequestStatus:
+					// FIXME
 			}
 		}
 	}

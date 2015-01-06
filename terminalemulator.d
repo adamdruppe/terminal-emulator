@@ -39,7 +39,7 @@ void unknownEscapeSequence(in char[] esc) {
 
 // This is used for the double-click word selection
 bool isWordSeparator(dchar ch) {
-	return ch == ' ' || ch == '"' || ch == '<' || ch == '>';
+	return ch == ' ' || ch == '"' || ch == '<' || ch == '>' || ch == '(' || ch == ')', ch == ',';
 }
 
 struct ScopeBuffer(T, size_t maxSize) {
@@ -521,6 +521,8 @@ class TerminalEmulator {
 		bool italic; /// .
 		bool strikeout; /// .
 
+		bool faint; /// .
+
 		// if the high bit here is set, you should use the full Color values if possible, and the value here sans the high bit if not
 		ushort foregroundIndex; /// .
 		ushort backgroundIndex; /// .
@@ -567,9 +569,9 @@ class TerminalEmulator {
 		if(offsetEnd < 0)
 			offsetEnd = 0;
 		if(offsetStart > (*buffer).length)
-			offsetStart = (*buffer).length;
+			offsetStart = cast(int) (*buffer).length;
 		if(offsetEnd > (*buffer).length)
-			offsetEnd = (*buffer).length;
+			offsetEnd = cast(int) (*buffer).length;
 
 		// if it is backwards, we can flip it
 		if(offsetEnd < offsetStart) {
@@ -603,7 +605,7 @@ class TerminalEmulator {
 				}
 			} else {
 				if(cell.ch == ' ' && firstSpace == -1)
-					firstSpace = ret.length;
+					firstSpace = cast(int) ret.length;
 				else if(cell.ch != ' ')
 					firstSpace = -1;
 			}
@@ -853,7 +855,7 @@ class TerminalEmulator {
 		}
 		currentScrollback += delta;
 
-		int max = scrollbackBuffer.length - screenHeight;
+		int max = cast(int) scrollbackBuffer.length - screenHeight;
 		if(max < 0)
 			max = 0;
 		if(currentScrollback > max)
@@ -894,9 +896,9 @@ class TerminalEmulator {
 	}
 
 	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar) {
-		int termination = scrollbackBuffer.length - howFar;
+		int termination = cast(int) scrollbackBuffer.length - howFar;
 		if(termination < 0)
-			termination = scrollbackBuffer.length;
+			termination = cast(int) scrollbackBuffer.length;
 
 		int start = termination - screenHeight;
 		if(start < 0)
@@ -993,6 +995,17 @@ class TerminalEmulator {
 			savedCursors = savedCursors[0 .. $-1];
 			savedCursors.assumeSafeAppend(); // we never keep references elsewhere so might as well reuse the memory as much as we can
 		}
+
+		// If the screen resized after this was saved, it might be restored to a bad amount, so we need to sanity test.
+		if(pos.x < 0)
+			pos.x = 0;
+		if(pos.y < 0)
+			pos.y = 0;
+		if(pos.x > screenWidth)
+			pos.x = screenWidth - 1;
+		if(pos.y > screenHeight)
+			pos.y = screenHeight - 1;
+
 		return pos;
 	}
 
@@ -1271,7 +1284,7 @@ class TerminalEmulator {
 
 				//if(!alternateScreenActive || cursorY < screenHeight - 1)
 					//newLine(false);
-				scrollbackWrappingAt = currentScrollbackLine.length;
+				scrollbackWrappingAt = cast(int) currentScrollbackLine.length;
 			} else
 				cursorX = cursorX + 1;
 
@@ -1321,7 +1334,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 				int idx = -1;
 				foreach(i, e; esc)
 					if(e == ';') {
-						idx = i;
+						idx = cast(int) i;
 						break;
 					}
 				if(idx != -1) {
@@ -1506,6 +1519,12 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								[i] = plain;
 						}
 					break;
+					case 's':
+						pushSavedCursor(cursorPosition);
+					break;
+					case 'u':
+						cursorPosition = popSavedCursor();
+					break;
 					case 'g':
 						auto arg = getArgs(0)[0];
 						TerminalCell plain;
@@ -1570,15 +1589,19 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								currentAttributes.bold = true;
 							break;
 							case 2:
-								// faint
+								currentAttributes.faint = true;
 							break;
 							case 3:
-								// italic
+								currentAttributes.italic = true;
 							break;
 							case 4:
 								currentAttributes.underlined = true;
 							break;
 							case 5:
+								currentAttributes.blink = true;
+							break;
+							case 6:
+								// rapid blink, treating the same as regular blink
 								currentAttributes.blink = true;
 							break;
 							case 7:
@@ -1587,12 +1610,27 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 8:
 								currentAttributes.invisible = true;
 							break;
+							case 9:
+								currentAttributes.strikeout = true;
+							break;
+							case 10:
+								// primary font
+							break;
+							case 11: .. case 19:
+								// alternate fonts
+							break;
+							case 20:
+								// Fraktur font
+							break;
+							case 21:
+								// bold off and doubled underlined
+							break;
 							case 22:
 								currentAttributes.bold = false;
-								// also not faint
+								currentAttributes.faint = false;
 							break;
 							case 23:
-								// not italic
+								currentAttributes.italic = false;
 							break;
 							case 24:
 								currentAttributes.underlined = false;
@@ -1600,11 +1638,17 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 25:
 								currentAttributes.blink = false;
 							break;
+							case 26:
+								// reserved
+							break;
 							case 27:
 								currentAttributes.inverse = false;
 							break;
 							case 28:
 								currentAttributes.invisible = false;
+							break;
+							case 29:
+								currentAttributes.strikeout = false;
 							break;
 							case 30:
 							..
@@ -1682,6 +1726,27 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 
 								currentAttributes.background = dflt.background;
 								currentAttributes.backgroundIndex = dflt.backgroundIndex;
+							break;
+							case 51:
+								// framed
+							break;
+							case 52:
+								// encircled
+							break;
+							case 53:
+								// overlined
+							break;
+							case 54:
+								// not framed or encircled
+							break;
+							case 55:
+								// not overlined
+							break;
+							case 90: .. case 97:
+								// high intensity foreground color
+							break;
+							case 100: .. case 107:
+								// high intensity background color
 							break;
 							default:
 								unknownEscapeSequence(cast(string) esc);
@@ -2362,7 +2427,7 @@ mixin template PtySupport(alias resizeHelper) {
 		} else {
 			import core.sys.posix.unistd;
 			while(data.length) {
-				int sent = write(master, data.ptr, data.length);
+				auto sent = write(master, data.ptr, cast(int) data.length);
 				if(sent < 0)
 					throw new Exception("write");
 				data = data[sent .. $];
@@ -2398,7 +2463,7 @@ mixin template PtySupport(alias resizeHelper) {
 		void readyToRead(int fd) {
 			import core.sys.posix.unistd;
 			ubyte[4096] buffer;
-			int len = read(fd, buffer.ptr, 4096);
+			auto len = read(fd, buffer.ptr, 4096);
 			if(len < 0)
 				throw new Exception("read failed");
 

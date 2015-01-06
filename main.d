@@ -18,6 +18,8 @@ enum string[dchar] altMappings = [
 	'a' : "Cool!",
 	'A' : "Boss",
 
+	't' : "θ",
+
 	'\'' : "\&ldquo;",
 	'\"' : "\&rdquo;",
 ];
