@@ -163,6 +163,7 @@ import stb_truetype;
 struct XImagePainter {
 	Image img;
 	TtfFont* font;
+	int fontWidth;
 
 	immutable {
 		int nextLineAdjustment;
@@ -179,9 +180,10 @@ struct XImagePainter {
 		return d[0 .. ending - d];
 	}
 
-	this(Image i, TtfFont* font) {
+	this(Image i, TtfFont* font, int fontWidth) {
 		this.img = i;
 		this.font = font;
+		this.fontWidth = fontWidth;
 
 		 nextLineAdjustment = img.adjustmentForNextLine();
 		 offR = img.redByteOffset();
@@ -349,67 +351,68 @@ struct XImagePainter {
 		// since this is monospace, w and h shouldn't change regardless
 		static GlyphInfo[dchar] characters;
 
-		GlyphInfo info;
+		foreach(dchar ch; text) {
+			GlyphInfo info;
 
-		dchar ch;
-		foreach(dchar c; text) {
-			ch = c;
-			break;
-		}
+			if(auto ptr = ch in characters) {
+				info = *ptr;
+			} else {
+				char[4] buffer;
+				import std.utf;
+				auto slice = buffer[0 .. encode(buffer, ch)];
+				info.bitmap = font.renderString(slice, TerminalEmulatorWindow.fontSize, info.w, info.h);
+				characters[ch] = info;
+			}
 
-		if(auto ptr = ch in characters) {
-			info = *ptr;
-		} else {
-			info.bitmap = font.renderString(text, TerminalEmulatorWindow.fontSize, info.w, info.h);
-			characters[ch] = info;
-		}
+			auto surface = getThing(up.x, up.y);
+			auto bmp = info.bitmap;
+			for (int j=0; j < info.h; ++j) {
+				auto line = surface;
+				for (int i=0; i < info.w; ++i) {
+					if(line.length == 0)
+						return;
+					auto a = bmp[0];
+					bmp = bmp[1 .. $];
 
-		auto surface = getThing(up.x, up.y);
-		auto bmp = info.bitmap;
-		for (int j=0; j < info.h; ++j) {
-			auto line = surface;
-			for (int i=0; i < info.w; ++i) {
-				if(line.length == 0)
-					return;
-				auto a = bmp[0];
-				bmp = bmp[1 .. $];
+					// alpha blending right here, inline
+					auto bgr = line[offR];
+					auto bgg = line[offG];
+					auto bgb = line[offB];
+					line[offR] = cast(ubyte) (outlineColor.r * a / 255 + bgr * (255 - a) / 255);
+					line[offG] = cast(ubyte) (outlineColor.g * a / 255 + bgg * (255 - a) / 255);
+					line[offB] = cast(ubyte) (outlineColor.b * a / 255 + bgb * (255 - a) / 255);
+					/*
+					if(a > 128) {
+					line[offR] = 0;
+					line[offG] = 0;
+					line[offB] = 0;
+					}
+					*/
 
-				// alpha blending right here, inline
-				auto bgr = line[offR];
-				auto bgg = line[offG];
-				auto bgb = line[offB];
-				line[offR] = cast(ubyte) (outlineColor.r * a / 255 + bgr * (255 - a) / 255);
-				line[offG] = cast(ubyte) (outlineColor.g * a / 255 + bgg * (255 - a) / 255);
-				line[offB] = cast(ubyte) (outlineColor.b * a / 255 + bgb * (255 - a) / 255);
-				/*
-				if(a > 128) {
-				line[offR] = 0;
-				line[offG] = 0;
-				line[offB] = 0;
+					line = line[bpp .. $];
 				}
-				*/
 
-				line = line[bpp .. $];
-			}
-
-			version(Windows)
-				{}
-			else
-				if(nextLineAdjustment >= surface.length)
-					break;
-
-			if(j +1 != info.h) {
 				version(Windows)
-					surface = (surface.ptr + nextLineAdjustment)[0 .. 100000];
+					{}
 				else
-					surface = surface[nextLineAdjustment .. $];
+					if(nextLineAdjustment >= surface.length)
+						break;
+
+				if(j +1 != info.h) {
+					version(Windows)
+						surface = (surface.ptr + nextLineAdjustment)[0 .. 100000];
+					else
+						surface = surface[nextLineAdjustment .. $];
+				}
 			}
+
+			up.x += fontWidth;
 		}
 	}
 }
 
-XImagePainter draw(Image i, TtfFont* font) {
-	return XImagePainter(i, font);
+XImagePainter draw(Image i, TtfFont* font, int fontWidth) {
+	return XImagePainter(i, font, fontWidth);
 }
 
 class NonCharacterData_Image : NonCharacterData {
@@ -750,7 +753,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		}
 
 		if(usingTtf) {
-			auto invalidated = redrawPainter(img.draw(&font), forceRedraw);
+			auto invalidated = redrawPainter(img.draw(&font, fontWidth), forceRedraw);
 			if(invalidated.right || invalidated.bottom)
 			painter.drawImage(Point(0, 0), img, Point(invalidated.left, invalidated.top), invalidated.right, invalidated.bottom);
 		} else
@@ -793,7 +796,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
 			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
-			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight - 1);
+			assert(posx - bufferX - 1 > 0);
+			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX - 1, fontHeight - 1);
 			painter.fillColor = Color.transparent;
 			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
 
