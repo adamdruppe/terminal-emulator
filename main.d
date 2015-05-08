@@ -773,14 +773,54 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			SelectObject(painter.impl.hdc, hFont);
 		}
 
+
 		int posx = paddingLeft;
 		int posy = paddingTop;
+
+
+		char[512] bufferText;
+		bool hasBufferedInfo;
+		int bufferTextLength;
+		Color bufferForeground;
+		Color bufferBackground;
+		int bufferX = -1;
+		int bufferY = -1;
+		bool bufferReverse;
+		void flushBuffer() {
+			if(!hasBufferedInfo) {
+				return;
+			}
+
+			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
+			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
+			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight - 1);
+			painter.fillColor = Color.transparent;
+			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
+
+			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
+
+			hasBufferedInfo = false;
+
+			bufferReverse = false;
+			bufferTextLength = 0;
+			bufferX = -1;
+			bufferY = -1;
+		}
+
+
+
 		int x;
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
+				flushBuffer();
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
+			if(bufferX == -1) {
+				bufferX = posx;
+				bufferY = posy;
+			}
+
 			{
 
 				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
@@ -809,38 +849,53 @@ class TerminalEmulatorWindow : TerminalEmulator {
 						bgc = palette[cell.attributes.backgroundIndex];
 					}
 
-					painter.fillColor = reverse ? fgc : bgc;
-					painter.outlineColor = reverse ? fgc : bgc;
-					painter.drawRectangle(Point(posx, posy), fontWidth - 1, fontHeight - 1);
-					painter.fillColor = Color.transparent;
-					painter.outlineColor = reverse ? bgc : fgc;
+					if(fgc != bufferForeground || bgc != bufferBackground || reverse != bufferReverse)
+						flushBuffer();
+					bufferReverse = reverse;
+					bufferBackground = bgc;
+					bufferForeground = fgc;
 				}
 			}
 
 				if(cell.ch != dchar.init) {
 					char[4] str;
 					import std.utf;
-					if(cell.ch != ' ') // no point wasting time drawing spaces, which are nothing; the bg rectangle already did the important thing
-					try {
-					auto stride = encode(str, cell.ch);
-					painter.drawText(Point(posx, posy), cast(immutable) str[0 .. stride]);
-					} catch(Exception e) {
-						import std.stdio;
-						writeln(cast(uint) cell.ch, " :: ", e.msg);
-					}
+					// now that it is buffered, we do want to draw it this way...
+					//if(cell.ch != ' ') { // no point wasting time drawing spaces, which are nothing; the bg rectangle already did the important thing
+						try {
+							auto stride = encode(str, cell.ch);
+							if(bufferTextLength + stride > bufferText.length)
+								flushBuffer();
+							bufferText[bufferTextLength .. bufferTextLength + stride] = str[0 .. stride];
+							bufferTextLength += stride;
+
+							if(bufferX == -1) {
+								bufferX = posx;
+								bufferY = posy;
+							}
+							hasBufferedInfo = true;
+						} catch(Exception e) {
+							import std.stdio;
+							writeln(cast(uint) cell.ch, " :: ", e.msg);
+						}
+					//}
 				} else if(cell.nonCharacterData !is null) {
 					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
+						flushBuffer();
 						painter.drawImage(Point(posx, posy), ncdi.data, Point(0, 0), fontWidth, fontHeight);
 					}
 				}
 
-				if(cell.attributes.underlined)
+				if(cell.attributes.underlined) {
+					flushBuffer();
 					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth - 1, posy + fontHeight - 1));
+				}
 			skipDrawing:
 
 				posx += fontWidth;
 			x++;
 			if(x == screenWidth) {
+				flushBuffer();
 				x = 0;
 				posy += fontHeight;
 				posx = paddingLeft;
