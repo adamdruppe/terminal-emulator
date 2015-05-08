@@ -123,9 +123,62 @@ void detachableMain(string[] args) {
 
 class DetachableTerminalEmulator : TerminalEmulator {
 	void writer(in void[] data) {
-		// FIXME: frame this data
-		if(socket !is null)
-			socket.send(data);
+		sendOutputMessage(OutputMessageType.dataFromTerminal, data);
+	}
+
+	final void sendOutputMessage(OutputMessageType type, const(void)[] data) {
+		if(socket !is null) {
+			if(data.length)
+				while(data.length) {
+					auto sending = data;
+					if(sending.length > 255) {
+						sending = sending[0 .. 255];
+					}
+
+					data = data[sending.length .. $];
+
+					ubyte[260] frame;
+					frame[0] = type;
+					assert(sending.length <= 255);
+					frame[1] = cast(ubyte) sending.length;
+					frame[2 .. 2 + sending.length] = cast(ubyte[]) sending[];
+
+					auto mustSend = frame[0 .. 2 + sending.length];
+						
+					try_again:
+					auto sent = socket.send(frame[0 .. 2 + sending.length]);
+					if(sent < 0 && wouldHaveBlocked()) {
+						import core.thread;
+						Thread.sleep(1.msecs);
+						goto try_again;
+					}
+					assert(sent == 2 + sending.length, lastSocketError());
+					/*
+					while(mustSend.length) {
+						auto sent = socket.send(frame[0 .. 2 + sending.length]);
+						if(sent <= 0) {
+							if(wouldHaveBlocked()) // this shouldn't happen given how small this is but eh
+								continue;
+							throw new Exception("send fail");
+						} else {
+							mustSend = mustSend[sent .. $];
+						}
+					}
+					*/
+				}
+			else {
+				ubyte[2] frame;
+				frame[0] = type;
+				frame[1] = 0;
+				socket.send(frame[0 .. 2]);
+				/*
+				again:
+				if(socket.send(frame) <= 0)
+					if(wouldHaveBlocked())
+						goto again;
+				*/
+			}
+		}
 	}
 
 	mixin ForwardVirtuals!(writer);
@@ -136,11 +189,13 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		assert(listeningSocket !is null);
 
 		if(socket !is null) {
+			sendOutputMessage(OutputMessageType.remoteDetached, null);
 			socket.close();
 			removeFileEventListeners(socket.handle);
 		}
 
 		socket = listeningSocket.accept();
+		socket.blocking = false; // blocking is bad with the event loop, cuz it is edge triggered
 		addFileEventListeners(cast(int) socket.handle, &socketReady, null, null);
 	}
 
@@ -151,6 +206,9 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		get_more:
 		auto len = socket.receive(buffer[l2 .. $]);
 		if(len <= 0) {
+			// we got it all if it would have blocked
+			if(wouldHaveBlocked())
+				return;
 			// they closed, so we'll detach too
 			socket.shutdown(SocketShutdown.BOTH);
 			socket.close();
@@ -239,10 +297,13 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					// FIXME
 			}
 		}
+
+		goto get_more;
 	}
 
 	this(int master, string socketName, string title) {
 		this.master = master;
+		makeNonBlocking(master);
 		addFileEventListeners(master, &readyToRead, null, null);
 
 		listeningSocket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
@@ -288,7 +349,8 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		import std.process;
 		environment["TERM"] = "xterm";
 		static import terminal_module = terminal;
-		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, cast(int) socket.handle, null /* FIXME? */);
+		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, -1, null /* FIXME? */);
+		terminal._writeDelegate = &writer;
 		terminal._wrapAround = false;
 
 		// these are about ensuring the caching doesn't break between calls given invalidation...

@@ -39,7 +39,7 @@ void unknownEscapeSequence(in char[] esc) {
 
 // This is used for the double-click word selection
 bool isWordSeparator(dchar ch) {
-	return ch == ' ' || ch == '"' || ch == '<' || ch == '>' || ch == '(' || ch == ')', ch == ',';
+	return ch == ' ' || ch == '"' || ch == '<' || ch == '>' || ch == '(' || ch == ')' || ch == ',';
 }
 
 struct ScopeBuffer(T, size_t maxSize) {
@@ -83,7 +83,7 @@ class TerminalEmulator {
 
 	protected abstract void changeTextAttributes(TextAttributes); /// current text output attributes
 	protected abstract void soundBell(); /// sounds the bell
-	protected abstract void sendToApplication(scope const(void)[]); /// send some data to the information
+	protected abstract void sendToApplication(scope const(void)[]); /// send some data to the program running in the terminal, so keypresses etc.
 
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
 	protected abstract void pasteFromClipboard(void delegate(in char[])); /// requests a paste. we pass it a delegate that should accept the data
@@ -661,11 +661,13 @@ class TerminalEmulator {
 
 	bool readingEsc = false;
 	ubyte[] esc;
-	/// sends raw input data to the terminal as if the user typed it or whatever
-	void sendRawInput(in ubyte[] data) {
+	/// sends raw input data to the terminal as if the application printf()'d it or it echoed or whatever
+	void sendRawInput(in ubyte[] datain) {
+		const(ubyte)[] data = datain;
 	//import std.array;
 	//assert(!readingEsc, replace(cast(string) esc, "\033", "\\"));
-		foreach(b; data) {
+		again:
+		foreach(didx, b; data) {
 			if(readingExtensionData >= 0) {
 				if(readingExtensionData == extensionMagicIdentifier.length) {
 					if(b) {
@@ -688,8 +690,15 @@ class TerminalEmulator {
 				} else {
 					if(b == extensionMagicIdentifier[readingExtensionData])
 						readingExtensionData++;
-					else
+					else {
+						// put the data back into the buffer, if possible
+						// (if the data was split across two packets, this may
+						//  not be possible. but in that case, meh.)
+						if(cast(int) didx - cast(int) readingExtensionData >= 0)
+							data = data[didx - readingExtensionData .. $];
 						readingExtensionData = -1;
+						goto again;
+					}
 				}
 
 				continue;
@@ -706,6 +715,7 @@ class TerminalEmulator {
 					// an esc in the middle of a sequence will
 					// cancel the first one
 					esc = null;
+					continue;
 				}
 
 				if(b == 10) {
@@ -1207,7 +1217,16 @@ class TerminalEmulator {
 		bool insertMode = false;
 		void newLine(bool commitScrollback) {
 			if(!alternateScreenActive && commitScrollback) {
+				// FIXME: switch to a circular buffer so we don't
+				// have to allocate here at all and actually keep lines
+				// rather than this awful cutoff thing
+				if(scrollbackBuffer.length >= 5000) {
+					scrollbackBuffer = null;
+					scrollingBack = false;
+				}
+
 				scrollbackBuffer ~= currentScrollbackLine.dup;
+
 				currentScrollbackLine = null;
 				scrollbackWrappingAt = 0;
 			}
@@ -2463,21 +2482,37 @@ mixin template PtySupport(alias resizeHelper) {
 		void readyToRead(int fd) {
 			import core.sys.posix.unistd;
 			ubyte[4096] buffer;
-			auto len = read(fd, buffer.ptr, 4096);
-			if(len < 0)
-				throw new Exception("read failed");
 
-			auto data = buffer[0 .. len];
+			while(true) {
+				auto len = read(fd, buffer.ptr, 4096);
+				if(len < 0) {
+					import core.stdc.errno;
+					if(errno == EAGAIN || errno == EWOULDBLOCK) {
+						break; // we got it all
+					} else {
+						//import std.conv;
+						//throw new Exception("read failed " ~ to!string(errno));
+						return;
+					}
+				}
 
-			if(debugMode) {
-				import std.array; import std.stdio; writeln("GOT ", data, "\nOR ", 
-					replace(cast(string) data, "\033", "\\")
-					.replace("\010", "^H")
-					.replace("\r", "^M")
-					.replace("\n", "^J")
-					);
+				if(len == 0) {
+					close(fd);
+					break;
+				}
+
+				auto data = buffer[0 .. len];
+
+				if(debugMode) {
+					import std.array; import std.stdio; writeln("GOT ", data, "\nOR ", 
+						replace(cast(string) data, "\033", "\\")
+						.replace("\010", "^H")
+						.replace("\r", "^M")
+						.replace("\n", "^J")
+						);
+				}
+				super.sendRawInput(data);
 			}
-			super.sendRawInput(data);
 
 			redraw();
 		}

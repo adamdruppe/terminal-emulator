@@ -19,9 +19,13 @@ enum string[dchar] altMappings = [
 	'A' : "Boss",
 
 	't' : "θ",
+	'p' : "\u03c6",
 
 	'\'' : "\&ldquo;",
 	'\"' : "\&rdquo;",
+
+	// unicode parens
+	// \u27e8\u27e9 or \u3008\u3009 
 ];
 
 /*
@@ -689,8 +693,14 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				sendToApplication(data);
 		});
 
-		version(Posix)
-		addFileEventListeners(master, &readyToRead, null, null);
+		version(Posix) {
+			makeNonBlocking(master);
+			addFileEventListeners(master, &readyToRead, null, null, false); // no edge triggering, that has a nasty habit of locking us up
+			addListener(delegate void(FileHup hup) {
+				import core.sys.posix.unistd;
+				close(hup.fd);
+			});
+		}
 
 		version(Windows) {
 			overlapped = new OVERLAPPED();

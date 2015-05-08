@@ -66,6 +66,9 @@ import std.socket;
 */
 
 struct Session {
+	import core.sys.posix.sys.types;
+	pid_t pid; // a hacky way to keep track of who has this open right now for remote detaching
+
 	// preserved in the file
 	string title;
 	string icon;
@@ -97,6 +100,8 @@ struct Session {
 		file.writeln("escapeCharacter: ", cast(dchar) (escapeCharacter + 'a' - 1));
 		file.writeln("showingTaskbar: ", showingTaskbar);
 		file.writeln("zeroBasedCounting: ", zeroBasedCounting);
+		file.writeln("pid: ", pid);
+		file.writeln("activeScreen: ", activeScreen);
 		file.writeln("screens: ", join(screens, " "));
 	}
 
@@ -124,6 +129,8 @@ struct Session {
 				break;
 				case "showingTaskbar": showingTaskbar = rhs == "true"; break;
 				case "zeroBasedCounting": zeroBasedCounting = rhs == "true"; break;
+				case "pid": pid = to!int(rhs); break;
+				case "activeScreen": activeScreen = to!int(rhs); break;
 				case "screens": screens = split(rhs.idup, " "); break;
 				default: continue;
 			}
@@ -198,9 +205,24 @@ void main(string[] args) {
 
 	import std.process;
 
+	// FIXME: set up a FIFO or something so we can receive commands
+	// pertaining to the whole session like detach... or something.
+	// if we do that it will need a way to find it by session name
+	// or by pid. Maybe a symlink.
+
 	session.cwd = std.file.getcwd();
 	session.title = session.sname;
 	session.readFromFile();
+
+	if(session.pid) {
+		// detach the old session
+		kill(session.pid, SIGHUP);
+		import core.sys.posix.unistd;
+		usleep(1_000_000); // give the old process a chance to die
+		session.readFromFile();
+	}
+
+	session.pid = getpid();
 
 	if(session.cwd.length)
 		std.file.chdir(session.cwd);
@@ -238,9 +260,27 @@ void main(string[] args) {
 		session.children[0].socket = connectTo(session.children[0].socketName);
 	}
 
+	void saveUpdatedSessionToFile() {
+		if(session.sname !is null) {
+			session.screens = null;
+			foreach(child; session.children) {
+				if(child.socket !is null)
+					session.screens ~= child.socketName;
+				else
+					session.screens ~= "[vacant]";
+			}
+			session.saveToFile();
+		}
+	}
+
+
+
+	saveUpdatedSessionToFile(); // saves the new PID
+
 	// doing these just to get it in the state i want
 	auto terminal = Terminal(ConsoleOutputType.cellular);
 	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+	try {
 
 	// We got a bit beyond what Terminal does and also disable kernel flow
 	// control, allowing us to capture ^S and ^Q too.
@@ -262,11 +302,15 @@ void main(string[] args) {
 	import core.sys.posix.unistd;
 	import core.sys.posix.sys.select;
 
-	foreach(idx, child; session.children)
-		if(child.socket !is null) {
-			setActiveScreen(&terminal, session, cast(int) idx, true);
-			break;
-		}
+	if(session.activeScreen < session.children.length && session.children[session.activeScreen].socket !is null) {
+		setActiveScreen(&terminal, session, cast(int) session.activeScreen, true);
+	} else {
+		foreach(idx, child; session.children)
+			if(child.socket !is null) {
+				setActiveScreen(&terminal, session, cast(int) idx, true);
+				break;
+			}
+	}
 	if(socket is null)
 		return;
 
@@ -299,9 +343,8 @@ void main(string[] args) {
 
 		auto ret = select(maxFd + 1, &rdfs, null, null, &timeout);
 		if(ret == -1) {
-			if(errno == 4) {
-				// FIXME: check interrupted and size event
-				while(running && (interrupted || windowSizeChanged))
+			if(errno == 4) { // EAGAIN
+				while(running && (interrupted || windowSizeChanged || hangedUp))
 					handleEvent(&terminal, session, input.nextEvent(), socket);
 				continue; // EINTR
 			}
@@ -320,84 +363,119 @@ void main(string[] args) {
 			foreach(ref child; session.children) if(child.socket !is null) {
 				if(FD_ISSET(child.socket.handle, &rdfs)) {
 					// data from the pty should be forwarded straight out
-					auto len = read(child.socket.handle, buffer.ptr, cast(int) buffer.length);
+					auto len = read(child.socket.handle, buffer.ptr, cast(int) 2);
 					if(len <= 0) {
 						// probably end of file or something cuz the child exited
 						// we should switch to the next possible screen
-						// throw new Exception("closing cuz of bad read " ~ to!string(errno));
+						//throw new Exception("closing cuz of bad read " ~ to!string(errno) ~ " " ~ to!string(len));
 						closeSocket(&terminal, session, child.socket);
 
 						continue;
 					}
 
-					/* read just for stuff in the background like bell or title change */
-					int lastEsc = -1;
-					int cut1 = 0, cut2 = 0;
-					foreach(bidx, b; buffer[0 .. len]) {
-						if(b == '\033')
-							lastEsc = cast(int) bidx;
+					assert(len == 2); // should be a frame
+					// unpack the frame
+					OutputMessageType messageType = cast(OutputMessageType) buffer[0];
+					ubyte messageLength = buffer[1];
+					if(messageLength) {
+						// unpack the message
+						int where = 0;
+						while(where < messageLength) {
+							len = read(child.socket.handle, buffer.ptr + where, messageLength - where);
+							if(len <= 0) assert(0);
+							where += len;
+						}
+						assert(where == messageLength);
+					}
 
-						if(b == '\007') {
-							if(lastEsc != -1) {
-								auto pieces = cast(char[]) buffer[lastEsc .. bidx];
-								cut1 = lastEsc;
-								cut2 = 0;
-								lastEsc = -1;
 
-								// anything longer is just unreasonable
-								if(pieces.length > 4 && pieces.length < 120)
-								if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
-									child.title = pieces[4 .. $].idup;
+					void handleDataFromTerminal() {
+						/* read just for stuff in the background like bell or title change */
+						int lastEsc = -1;
+						int cut1 = 0, cut2 = 0;
+						foreach(bidx, b; buffer[0 .. messageLength]) {
+							if(b == '\033')
+								lastEsc = cast(int) bidx;
+
+							if(b == '\007') {
+								if(lastEsc != -1) {
+									auto pieces = cast(char[]) buffer[lastEsc .. bidx];
+									cut1 = lastEsc;
+									cut2 = 0;
+									lastEsc = -1;
+
+									// anything longer is just unreasonable
+									if(pieces.length > 4 && pieces.length < 120)
+									if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
+										child.title = pieces[4 .. $].idup;
+										redrawTaskbar = true;
+
+										cut2 = cast(int) bidx;
+									}
+								}
+								if(child.socket !is socket) {
+									child.demandsAttention = true;
 									redrawTaskbar = true;
-
-									cut2 = cast(int) bidx;
 								}
 							}
-							if(child.socket !is socket) {
-								child.demandsAttention = true;
-								redrawTaskbar = true;
+						}
+
+						// activity on the active screen needs to be forwarded
+						// to the actual terminal so the user can see it too
+						if(!outputPaused && child.socket is socket) {
+							void writeOut(ubyte[] toWrite) {
+								int len = cast(int) toWrite.length;
+								while(len > 0) {
+									if(!debugMode) {
+										auto wrote = write(1, toWrite.ptr, len);
+										if(wrote <= 0)
+											throw new Exception("write");
+										toWrite = toWrite[wrote .. $];
+										len -= wrote;
+									} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+								}
+							}
+
+							// FIXME
+							if(false && cut2 > cut1) {
+								// cut1 .. cut2 should be sliced out of the final output
+								// a title change isn't necessarily desirable directly since
+								// we do it in the session
+								writeOut(buffer[0 .. cut1]);
+								writeOut(buffer[cut2 + 1 .. messageLength]);
+							} else {
+								writeOut(buffer[0 .. messageLength]);
 							}
 						}
-					}
 
-					// activity on the active screen needs to be forwarded
-					// to the actual terminal so the user can see it too
-					if(!outputPaused && child.socket is socket) {
-						auto toWrite = buffer[0 .. len];
-						void writeOut(ubyte[] toWrite) {
-							int len = cast(int) toWrite.length;
-							while(len > 0) {
-								if(!debugMode) {
-									auto wrote = write(1, toWrite.ptr, len);
-									if(wrote <= 0)
-										throw new Exception("write");
-									toWrite = toWrite[wrote .. $];
-									len -= wrote;
-								} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
-							}
+						/+
+						/* there's still new activity here */
+						if(child.lastWasSilent && child.lastActivity) {
+							child.demandsAttention = true;
+							redrawTaskbar = true;
+							child.lastWasSilent = false;
 						}
-
-						// FIXME
-						if(false && cut2 > cut1) {
-							// cut1 .. cut2 should be sliced out of the final output
-							// a title change isn't necessarily desirable directly since
-							// we do it in the session
-							writeOut(buffer[0 .. cut1]);
-							writeOut(buffer[cut2 + 1 .. $]);
-						} else {
-							writeOut(buffer[0 .. len]);
-						}
+						child.lastActivity = time(null);
+						+/
 					}
 
-					/+
-					/* there's still new activity here */
-					if(child.lastWasSilent && child.lastActivity) {
-						child.demandsAttention = true;
-						redrawTaskbar = true;
-						child.lastWasSilent = false;
+					final switch(messageType) {
+						case OutputMessageType.NULL:
+							// should never happen
+							assert(0);
+						break;
+						case OutputMessageType.dataFromTerminal:
+							handleDataFromTerminal();
+						break;
+						case OutputMessageType.remoteDetached:
+							// FIXME: this should be done on a session level
+
+							// but the idea is if one is remote detached, they all are,
+							// so we should just terminate immediately as to not write a new file
+							return;
+
+						break;
 					}
-					child.lastActivity = time(null);
-					+/
 				} else {
 					/+
 					/* there was not any new activity, see if it has become silent */
@@ -426,16 +504,12 @@ void main(string[] args) {
 			drawTaskbar(&terminal, session);
 	}
 
-	if(session.sname !is null) {
-		session.screens = null;
-		foreach(child; session.children) {
-			if(child.socket !is null)
-				session.screens ~= child.socketName;
-			else
-				session.screens ~= "[vacant]";
-		}
-		session.saveToFile();
-	}
+	session.pid = 0; // we're terminating, don't keep the pid anymore
+	saveUpdatedSessionToFile();
+	 } catch(Throwable t) {
+		terminal.writeln("\n\n\n", t);
+		input.getch();
+	 }
 }
 
 
@@ -654,6 +728,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 	// FIXME: UI stuff
 	static bool escaping;
 	static bool gettingCommandLine;
+	static bool gettingListSelection;
 	static LineGetter lineGetter;
 	
 	InputMessage im;
@@ -680,6 +755,13 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			forceRedraw(terminal, session);
 		}
 
+		return;
+	}
+
+	if(gettingListSelection) {
+		gettingListSelection = false;
+		outputPaused = false;
+		forceRedraw(terminal, session);
 		return;
 	}
 
@@ -744,12 +826,21 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 						// detach only the screen
 						closeSocket(terminal, session);
 					break;
+					case 'i':
+						// request information
+						terminal.writeln(session.children[session.activeScreen].socketName);
+					break;
 					case 12: // ^L
 						forceRedraw(terminal, session);
 					break;
 					case '"':
 						// list everything and give ui to choose
-						// FIXME
+						// FIXME: finish the UI of this
+						terminal.clear();
+						foreach(idx, child; session.children)
+							terminal.writeln("\t", idx + 1, ": ", child.title, " (", child.socketName, ".socket)");
+						gettingListSelection = true;
+						outputPaused = true;
 					break;
 					case ':':
 						triggerCommandLine();

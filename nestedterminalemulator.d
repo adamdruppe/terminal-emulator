@@ -149,6 +149,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 		this.master = master;
 		this.terminal = terminal;
 		//this.rtInput = rtInput;
+		makeNonBlocking(master);
 		addFileEventListeners(master, &readyToRead, null, null);
 
 		if(terminal)

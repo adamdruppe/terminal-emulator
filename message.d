@@ -14,6 +14,21 @@ string socketDirectoryName() {
 	return dirName;
 }
 
+/*
+	OutputMessages, from the terminal process itself, come in this format:
+	ubyte: message type
+	ubyte: message length
+	bytes[] message
+
+	Messages longer than 255 bytes must be broken up into several messages.
+*/
+
+enum OutputMessageType : ubyte {
+	NULL,
+	dataFromTerminal,
+	remoteDetached,
+}
+
 struct InputMessage {
 	enum Type : int {
 		// key event
@@ -45,6 +60,9 @@ struct InputMessage {
 		RequestStatus, // requests status about the backend - pid, etc.
 		Attach, // attaches it and updates the status info
 		Detach,
+		// We also want redraw and title and such so I can just ask
+		// for info about a socket and dump it to a terminal to like
+		// quasi attach without actually attaching.
 	}
 
 	// for modifiers
