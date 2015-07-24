@@ -4,7 +4,7 @@ BUILDING
 
 See the example makefile for what I do on my system. You'll need a collection of files from my arsd repo, then just pass them all right over using the same version and -J flags I did.
 
-	dmd main.d terminalemulator.d -L-lutil ~/arsd/{color,eventloop,stb_truetype,xwindows,png,bmp}.d -version=with_eventloop -J.
+	dmd main.d terminalemulator.d -L-lutil ~/arsd/{color,eventloop,stb_truetype,xwindows,png,bmp,simpledisplay}.d -version=with_eventloop -J.
 
 for one example
 
