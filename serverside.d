@@ -1,3 +1,13 @@
+// OBSOLETE - the Windows version can now speak ssh.
+// ****************************
+// dmd serverside.d -L-lutil
+
+deprecated:
+
+// the following is just cuz the forkpty example might be
+// useful to me some day.
+
+
 /*
 	This program is needed because the Windows version doesn't actually speak ssh.
 

@@ -29,8 +29,19 @@ version(Windows)
 	import core.sys.windows.windows;
 
 version(Windows) extern(Windows) DWORD WaitForSingleObjectEx( HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertable);
+version(Windows) extern(Windows) DWORD WaitForMultipleObjectsEx(DWORD  nCount,const HANDLE *lpHandles,BOOL   bWaitAll,DWORD  dwMilliseconds,BOOL   bAlertable);
 
-version(Windows)
+version(use_libssh2)
+void main(string[] args) {
+	import arsd.libssh2;
+	import std.socket;
+	void startup(Socket socket, LIBSSH2_CHANNEL* sshChannel) {
+		// FIXME: finish this
+	}
+
+	startChild!startup();
+}
+else version(Windows)
 void main(string[] args) {
 	if(args.length < 2) {
 		import std.stdio;
@@ -122,7 +133,17 @@ class NestedTerminalEmulator : TerminalEmulator {
 	version(Windows)
 	import core.sys.windows.windows;
 
-	version(Windows)
+	version(use_libssh2)
+	import arsd.libssh2;
+
+	version(use_libssh2)
+	this(LIBSSH2_CHANNEL* sshChannel, Terminal* terminal) {
+		this.sshChannel = sshChannel;
+		this.terminal = terminal;
+		super(terminal.width, terminal.height);
+	}
+
+	else version(Windows)
 	this(HANDLE stdin, HANDLE stdout, Terminal* terminal) {
 		this.stdin = stdin;
 		this.stdout = stdout;
@@ -142,9 +163,7 @@ class NestedTerminalEmulator : TerminalEmulator {
 			redraw();
 		}
 	}
-	
-
-	version(Posix)
+	else version(Posix)
 	this(int master, Terminal* terminal) {
 		this.master = master;
 		this.terminal = terminal;
@@ -175,7 +194,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 		final switch(event.type) {
 			// FIXME: what about Ctrl+Z? maybe terminal.d should catch that signal too. SIGSTOP i think tho could be SIGTSTP
 			case InputEvent.Type.HangupEvent:
-				exit();
+				version(with_eventloop)
+					exit();
 			break;
 			case InputEvent.Type.CharacterEvent:
 				auto ce = event.get!(InputEvent.Type.CharacterEvent);

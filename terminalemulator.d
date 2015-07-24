@@ -2096,6 +2096,57 @@ mixin template ImageSupport() {
 
 /* helper functions that are generally useful but not necessarily required */
 
+version(use_libssh2) {
+	import arsd.libssh2;
+	void startChild(alias masterFunc)() {
+		import std.socket;
+
+		if(libssh2_init(0))
+			throw new Exception("libssh2_init");
+		scope(exit)
+			libssh2_exit();
+
+		auto socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+		socket.connect(new InternetAddress("arsdnet.net", 22));
+		scope(exit) socket.close();
+
+		auto session = libssh2_session_init_ex(null, null, null, null);
+		if(session is null) throw new Exception("init session");
+		scope(exit)
+			libssh2_session_disconnect_ex(session, 0, "normal", "EN");
+
+		if(libssh2_session_handshake(session, socket.handle))
+			throw new Exception("handshake");
+
+		auto fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
+
+		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, "me".ptr, "me".length, "id_rsa.pub", "id_rsa", null))
+			throw new Exception("auth");
+
+
+		auto channel = libssh2_channel_open_ex(session, "session".ptr, "session".length, LIBSSH2_CHANNEL_WINDOW_DEFAULT, LIBSSH2_CHANNEL_PACKET_DEFAULT, null, 0);
+
+		if(channel is null)
+			throw new Exception("channel open");
+
+		scope(exit)
+			libssh2_channel_free(channel);
+
+		libssh2_channel_setenv_ex(channel, "ELVISBG".dup.ptr, "ELVISBG".length, "dark".ptr, "dark".length);
+
+		if(libssh2_channel_request_pty_ex(channel, "xterm", "xterm".length, null, 0, 80, 24, 0, 0))
+			throw new Exception("pty");
+
+		if(libssh2_channel_process_startup(channel, "shell".ptr, "shell".length, null, 0))
+			throw new Exception("process_startup");
+
+		libssh2_keepalive_config(session, 0, 60);
+		libssh2_session_set_blocking(session, 0);
+
+		masterFunc(socket, channel);
+	}
+
+} else
 version(Posix) {
 	extern(C) static int forkpty(int* master, /*int* slave,*/ void* name, void* termp, void* winp);
 	pragma(lib, "util");
@@ -2152,7 +2203,7 @@ version(Posix) {
 			masterFunc(master);
 		}
 	}
-}
+} else
 version(Windows) {
 	import core.sys.windows.windows;
 
@@ -2401,49 +2452,51 @@ final void doNothing() {}
 /// You must implement a function called redraw() and initialize the members in your constructor
 mixin template PtySupport(alias resizeHelper) {
 	// Initialize these!
-	version(Windows) {
+
+	version(use_libssh2) {
+		import arsd.libssh2;
+		LIBSSH2_CHANNEL* sshChannel;
+	} else version(Windows) {
 		import core.sys.windows.windows;
 		HANDLE stdin;
 		HANDLE stdout;
-	}
-	version(Posix) {
+	} else version(Posix) {
 		int master;
 	}
-
-	// for resizing...
-	version(Windows)
-		enum bool useIoctl = false;
-	version(Posix)
-		bool useIoctl = true;
-
 
 	override void resizeTerminal(int w, int h) {
 		resizeHelper();
 
 		super.resizeTerminal(w, h);
 
-		if(useIoctl) {
-			version(Posix) {
-				import core.sys.posix.sys.ioctl;
-				winsize win;
-				win.ws_col = cast(ushort) w;
-				win.ws_row = cast(ushort) h;
+		version(use_libssh2) {
+			libssh2_channel_request_pty_size_ex(sshChannel, w, h, 0, 0);
+		} else version(Posix) {
+			import core.sys.posix.sys.ioctl;
+			winsize win;
+			win.ws_col = cast(ushort) w;
+			win.ws_row = cast(ushort) h;
 
-				ioctl(master, TIOCSWINSZ, &win);
-			} else assert(0);
-		} else {
-			// this is a special command that my serverside program understands- it will be interpreted as nonsense if you don't run serverside...
-			sendToApplication(cast(ubyte[]) [cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
-		}
+			ioctl(master, TIOCSWINSZ, &win);
+		} else version(Windows) {
+			sendToApplication([cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
+		} else static assert(0);
 	}
 
 	protected override void sendToApplication(scope const(void)[] data) {
-		version(Windows) {
+		version(use_libssh2) {
+			while(data.length) {
+				auto sent = libssh2_channel_write_ex(sshChannel, 0, data.ptr, data.length);
+				if(sent < 0)
+					throw new Exception("libssh2_channel_write_ex");
+				data = data[sent .. $];
+			}
+		} else version(Windows) {
 			import std.conv;
 			uint written;
 			if(WriteFile(stdin, data.ptr, data.length, &written, null) == 0)
 				throw new Exception("WriteFile " ~ to!string(GetLastError()));
-		} else {
+		} else version(Posix) {
 			import core.sys.posix.unistd;
 			while(data.length) {
 				auto sent = write(master, data.ptr, cast(int) data.length);
@@ -2451,10 +2504,33 @@ mixin template PtySupport(alias resizeHelper) {
 					throw new Exception("write");
 				data = data[sent .. $];
 			}
-		}
+		} else static assert(0);
 	}
 
-	version(Windows) {
+	version(use_libssh2) {
+		void readyToRead(int fd) {
+			while(true) {
+				ubyte[4096] buffer;
+				auto got = libssh2_channel_read_ex(sshChannel, 0, buffer.ptr, buffer.length);
+				if(got == LIBSSH2_ERROR_EAGAIN)
+					break; // got it all for now
+				if(got < 0)
+					throw new Exception("libssh2_channel_read_ex");
+				if(got == 0)
+					break; // NOT an error!
+
+				super.sendRawInput(buffer[0 .. got]);
+			}
+
+			if(libssh2_channel_eof(sshChannel)) {
+				//import core.sys.posix.unistd;
+				//close(fd);
+				// FIXME I think
+			}
+
+			redraw();
+		}
+	} else version(Windows) {
 		OVERLAPPED* overlapped;
 		bool overlappedBufferLocked;
 		ubyte[4096] overlappedBuffer;
@@ -2477,8 +2553,7 @@ mixin template PtySupport(alias resizeHelper) {
 			} else {
 			}
 		}
-	}
-	version(Posix) {
+	} else version(Posix) {
 		void readyToRead(int fd) {
 			import core.sys.posix.unistd;
 			ubyte[4096] buffer;
@@ -2604,6 +2679,7 @@ IndexedImage readSmallTextImage(string arg) {
 		if(readingPalette) {
 			if(arg[0] == 'Z') {
 				readingPalette = false;
+				arg = arg[1 .. $];
 				continue;
 			}
 			if(arg.length < 8)

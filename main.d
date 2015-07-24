@@ -1,3 +1,7 @@
+// FIXME: on Windows 8, the size event doesn't fire when you maximize the window
+
+// FIXME: use_libssh2 should do keepalive.
+
 /**
 	This is the graphical application for the terminal emulator.
 
@@ -111,7 +115,65 @@ struct SRectangle {
 	int right;
 	int bottom;
 }
-version(Windows)
+
+version(Windows) {
+	import core.sys.windows.windows;
+	import core.sys.windows.winsock2;
+}
+
+version(Windows) {
+	extern(Windows) int WSAAsyncSelect(SOCKET, HWND, uint, int);
+	enum int FD_CLOSE = 1 << 5;
+	enum int FD_READ = 1 << 0;
+	enum int WM_USER = 1024;
+}
+
+version(use_libssh2)
+void main(string[] args) {
+	import arsd.libssh2;
+	import std.socket;
+	void startup(Socket socket, LIBSSH2_CHANNEL* sshChannel) {
+		import std.conv;
+		auto term = new TerminalEmulatorWindow(sshChannel, (args.length > 1) ? to!int(args[1]) : 0);
+		version(Posix) {
+			import arsd.eventloop;
+			addFileEventListeners(cast(int) socket.handle, &term.readyToRead, null, null, false);
+			addListener(delegate void(FileHup hup) {
+				import core.sys.posix.unistd;
+				close(hup.fd);
+			});
+			loop();
+		} else version(Windows) {
+			if(WSAAsyncSelect(socket.handle, term.window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))
+				throw new Exception("WSAAsyncSelect");
+			term.window.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+				if(hwnd !is term.window.impl.hwnd)
+					return 1; // we don't care...
+				switch(msg) {
+					case WM_USER + 150: // socket activity
+						switch(LOWORD(lParam)) {
+							case FD_READ:
+								term.readyToRead(0);
+							break;
+							case FD_CLOSE:
+								term.window.close();
+							break;
+							default:
+								// nothing
+						}
+					break;
+					default: return 1; // not handled, pass it on
+				}
+				return 0;
+			};
+			term.window.eventLoop(10);
+		} else static assert(0);
+		// 
+	}
+
+	startChild!startup();
+}
+else version(Windows)
 void main(string[] args) {
 	import core.sys.windows.windows;
 	void startup(HANDLE inwritePipe, HANDLE outreadPipe) {
@@ -532,13 +594,17 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	bool usingTtf;
 
-	version(Posix)
+	version(use_libssh2)
+	this(LIBSSH2_CHANNEL* sshChannel, int fontSize = 0) {
+		this.sshChannel = sshChannel;
+		this(fontSize);
+	}
+	else version(Posix)
 	this(int masterfd, int fontSize = 0) {
 		master = masterfd;
 		this(fontSize);
 	}
-
-	version(Windows)
+	else version(Windows)
 	this(HANDLE stdin, HANDLE stdout, int fontSize = 0) {
 		this.stdin = stdin;
 		this.stdout = stdout;
@@ -696,6 +762,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				sendToApplication(data);
 		});
 
+		version(use_libssh2) {
+
+		} else
 		version(Posix) {
 			makeNonBlocking(master);
 			addFileEventListeners(master, &readyToRead, null, null, false); // no edge triggering, that has a nasty habit of locking us up
@@ -703,8 +772,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				import core.sys.posix.unistd;
 				close(hup.fd);
 			});
-		}
-
+		} else 
 		version(Windows) {
 			overlapped = new OVERLAPPED();
 			overlapped.hEvent = cast(void*) this;
@@ -794,9 +862,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				return;
 			}
 
+			assert(posx - bufferX - 1 > 0);
 			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
 			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
-			assert(posx - bufferX - 1 > 0);
 			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX - 1, fontHeight - 1);
 			painter.fillColor = Color.transparent;
 			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
@@ -891,7 +959,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				}
 
 				if(cell.attributes.underlined) {
+					// the posx adjustment is because the buffer assumes it is going
+					// to be flushed after advancing, but here, we're doing it mid-character
+					// FIXME: we should just underline the whole thing consecutively, with the buffer
+					posx += fontWidth;
 					flushBuffer();
+					posx -= fontWidth;
 					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth - 1, posy + fontHeight - 1));
 				}
 			skipDrawing:

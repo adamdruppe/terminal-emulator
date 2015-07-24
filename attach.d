@@ -1,3 +1,5 @@
+// FIXME: catch the suspend signal (ctrl+z) and forward it inside
+// FIXME: i should be able to change the title from the outside too
 /++
 	This is a GNU Screen style program to multiplex and provide remote attach/detach
 	support to a terminal emulator backend.
