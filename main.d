@@ -12,7 +12,8 @@
 	dmd main.d arsd\simpledisplay.d arsd\color.d -debug arsd\stb_truetype.d terminalemulator.d -Jfont arsd\png.d arsd\bmp.d
 
 
-	The windows version expects serverside.d to be running on the other side and needs plink.exe available to speak ssh.
+	The windows version expects serverside.d to be running on the other side and needs plink.exe available to speak ssh unless
+	you compile with -version=use_libssh2.
 */
 
 // FIXME: blue text under the cursor is virtually impossible to see.
@@ -185,7 +186,7 @@ void main(string[] args) {
 
 	if(args.length < 2) {
 		import std.stdio;
-		writeln("Give a command line to run like: plink.exe user@server.com -i keyfile /opt/serverside");
+		writeln("Give a font size and command line to run like: 0 plink.exe user@server.com -i keyfile /opt/serverside");
 		return;
 	}
 
