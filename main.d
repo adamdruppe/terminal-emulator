@@ -514,16 +514,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 			Image data = new Image(fontWidth, fontHeight);
 			foreach(y; 0 .. fontHeight) {
-				if(y + iy >= mi.height)
-					break;
 				foreach(x; 0 .. fontWidth) {
-					if(x + ix >= mi.width) {
-						break;
+					if(x + ix >= mi.width || y + iy >= mi.height) {
+						data.putPixel(x, y, defaultTextAttributes.background);
+						continue;
 					}
 					data.putPixel(x, y, mi.imageData.colors[(iy + y) * mi.width + (ix + x)]);
 				}
-				// FIXME: fill it with a transparent pixel or at least the background color
-				// if there's space left off the side due to not quite fitting in a perfect text cell
 			}
 
 			ix += fontWidth;
@@ -865,7 +862,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			assert(posx - bufferX - 1 > 0);
 			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
 			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
-			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX - 1, fontHeight - 1);
+			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight);
 			painter.fillColor = Color.transparent;
 			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
 
@@ -888,7 +885,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
-			if(bufferX == -1) {
+			version(none) if(bufferX == -1) { // why was this ever here?
 				bufferX = posx;
 				bufferY = posy;
 			}
@@ -965,7 +962,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					posx += fontWidth;
 					flushBuffer();
 					posx -= fontWidth;
-					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth - 1, posy + fontHeight - 1));
+					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth, posy + fontHeight - 1));
 				}
 			skipDrawing:
 
@@ -992,13 +989,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 			final switch(cursorStyle) {
 				case CursorStyle.block:
-					painter.drawRectangle(Point(posx, posy), cursorWidth - 1, cursorHeight -1);
+					painter.drawRectangle(Point(posx, posy), cursorWidth, cursorHeight);
 				break;
 				case CursorStyle.underline:
-					painter.drawRectangle(Point(posx, posy + cursorHeight - 2 - 1), cursorWidth, 2);
+					painter.drawRectangle(Point(posx, posy + cursorHeight - 2), cursorWidth, 2);
 				break;
 				case CursorStyle.bar:
-					painter.drawRectangle(Point(posx, posy), 2, cursorHeight - 1);
+					painter.drawRectangle(Point(posx, posy), 2, cursorHeight);
 				break;
 			}
 			painter.rasterOp = RasterOp.normal;

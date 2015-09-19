@@ -130,5 +130,8 @@ version(terminalextensions_commandline) {
 		term.writeln("Command not found, valid functions are:");
 		foreach(func; functions)
 			term.writeln("\t", func);
+
+
+		term.flush();
 	}
 }

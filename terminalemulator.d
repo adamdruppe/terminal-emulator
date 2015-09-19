@@ -1,4 +1,8 @@
 /**
+	FIXME: writing a line in color then a line in ordinary does something
+	wrong.
+
+
 	There should be a redraw thing that is given batches of instructions
 	in here that the other thing just implements.
 
@@ -511,7 +515,7 @@ class TerminalEmulator {
 	Color[256] palette;
 
 	/// .
-	struct TextAttributes {
+	static struct TextAttributes {
 		bool bold; /// .
 		bool blink; /// .
 		bool invisible; /// .
@@ -532,7 +536,7 @@ class TerminalEmulator {
 	}
 
 	/// represents one terminal cell
-	struct TerminalCell {
+	static struct TerminalCell {
 		dchar ch = ' '; /// the character
 		NonCharacterData nonCharacterData; /// iff ch == dchar.init. may still be null, in which case this cell should not be drawn at all.
 
@@ -542,7 +546,7 @@ class TerminalEmulator {
 	}
 
 	/// Cursor position, zero based. (0,0) == upper left. (0, 1) == second row, first column.
-	struct CursorPosition {
+	static struct CursorPosition {
 		int x; /// .
 		int y; /// .
 		alias y row;
@@ -989,7 +993,12 @@ class TerminalEmulator {
 			c = plain;
 
 		// then, in normal mode, we'll redraw using the scrollback buffer
-		showScrollbackOnScreen(normalScreen, 0);
+		//
+		// if we're in the alternate screen though, keep it blank because
+		// while redrawing makes sense in theory, odds are the program in
+		// charge of the normal screen didn't get the resize signal.
+		if(!alternateScreenActive)
+			showScrollbackOnScreen(normalScreen, 0);
 		// but in alternate mode, it is the application's responsibility
 
 		// the property ensures these are within bounds so this set just forces that
@@ -1234,6 +1243,12 @@ class TerminalEmulator {
 			cursorX = 0;
 			if(scrollingEnabled && cursorY >= scrollZoneBottom) {
 				size_t idx = scrollZoneTop * screenWidth;
+
+				// When we scroll up, we need to update the selection position too
+				if(selectionStart != selectionEnd) {
+					selectionStart -= screenWidth;
+					selectionEnd -= screenWidth;
+				}
 				foreach(l; scrollZoneTop .. scrollZoneBottom)
 				foreach(i; 0 .. screenWidth) {
 					if(alternateScreenActive) {
