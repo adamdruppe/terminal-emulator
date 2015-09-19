@@ -167,6 +167,7 @@ void main(string[] args) {
 				}
 				return 0;
 			};
+			term.window.handlePulse = delegate void() {};
 			term.window.eventLoop(10);
 		} else static assert(0);
 		// 
