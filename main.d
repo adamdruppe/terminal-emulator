@@ -133,9 +133,16 @@ version(use_libssh2)
 void main(string[] args) {
 	import arsd.libssh2;
 	import std.socket;
-	void startup(Socket socket, LIBSSH2_CHANNEL* sshChannel) {
+	void startup(Socket socket, LIBSSH2_SESSION* sshSession, LIBSSH2_CHANNEL* sshChannel) {
 		import std.conv;
 		auto term = new TerminalEmulatorWindow(sshChannel, (args.length > 1) ? to!int(args[1]) : 0);
+		auto timer = new Timer(30 * 1000, {
+			int next;
+			int err = libssh2_keepalive_send(sshSession, &next);
+			if (err) {
+         			// blargh... close the window?
+			}
+		});
 		version(Posix) {
 			import arsd.eventloop;
 			addFileEventListeners(cast(int) socket.handle, &term.readyToRead, null, null, false);
@@ -154,7 +161,8 @@ void main(string[] args) {
 					case WM_USER + 150: // socket activity
 						switch(LOWORD(lParam)) {
 							case FD_READ:
-								term.readyToRead(0);
+								if(term.readyToRead(0))
+									term.window.close();
 							break;
 							case FD_CLOSE:
 								term.window.close();
@@ -167,13 +175,35 @@ void main(string[] args) {
 				}
 				return 0;
 			};
-			term.window.handlePulse = delegate void() {};
-			term.window.eventLoop(10);
+			term.window.eventLoop(0);
 		} else static assert(0);
 		// 
 	}
 
-	startChild!startup();
+	if(args.length <  6) {
+		import std.format : format;
+		import std.string : toStringz;
+		auto msg = format("Provide a list of arguments like:\n%s font_size host port username keyfile\nSo for example: %s example.com 0 22 root /path/to/id_rsa\n(font size of 0 means use a system font)\nOn Windows, it might be helpful to create a shortcut with your options specified in the properties sheet command line option.", args[0], args[0]);
+
+		version(Windows)
+			MessageBoxA(null, toStringz(msg), "Couldn't start up", 0);
+		else {
+			import std.stdio;
+			writeln(msg);
+		}
+		return;
+	}
+
+	string host = args[2];
+	import std.conv : to;
+	short port = to!short(args[3]);
+	string username = args[4];
+	string keyfile = args[5];
+	string expectedFingerprint = null;
+	if(args.length > 6)
+		expectedFingerprint = args[6];
+
+	startChild!startup(host, port, username, keyfile, expectedFingerprint);
 }
 else version(Windows)
 void main(string[] args) {

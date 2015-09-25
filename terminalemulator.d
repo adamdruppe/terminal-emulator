@@ -2,6 +2,8 @@
 	FIXME: writing a line in color then a line in ordinary does something
 	wrong.
 
+	FIXME: make shift+enter send something special to the application
+
 
 	There should be a redraw thing that is given batches of instructions
 	in here that the other thing just implements.
@@ -606,14 +608,28 @@ class TerminalEmulator {
 					// we ended with a bunch of spaces, let's replace them with a single newline so the next is more natural
 					ret = ret[0 .. firstSpace];
 					ret ~= "\n";
+					firstSpace = -1;
 				}
 			} else {
 				if(cell.ch == ' ' && firstSpace == -1)
-					firstSpace = cast(int) ret.length;
+					firstSpace = cast(int) ret.length - 1;
 				else if(cell.ch != ' ')
 					firstSpace = -1;
 			}
 		}
+		if(firstSpace != -1) {
+			bool allSpaces = true;
+			foreach(item; ret[firstSpace .. $]) {
+				if(item != ' ') {
+					allSpaces = false;
+					break;
+				}
+			}
+
+			if(allSpaces)
+				ret = ret[0 .. firstSpace];
+		}
+
 		return ret;
 	}
 
@@ -1814,12 +1830,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						}
 					break;
 					case 'r':
-						// set scrolling zone
+						if(esc[1] != '?') {
+							// set scrolling zone
 							// default should be full size of window
-						auto args = getArgs(1, screenHeight);
+							auto args = getArgs(1, screenHeight);
 
-						scrollZoneTop = args[0] - 1;
-						scrollZoneBottom = args[1] - 1;
+							scrollZoneTop = args[0] - 1;
+							scrollZoneBottom = args[1] - 1;
+						} else {
+							// restore... something FIXME
+						}
 					break;
 					case 'h':
 						if(esc[1] != '?')
@@ -1881,7 +1901,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									mouseButtonTracking = true;
 									mouseButtonReleaseTracking = true;
 								break;
-								// case 1001: // hilight tracking, this is kinda weird so i don't think i want to implement it
+								case 1001: // hilight tracking, this is kinda weird so i don't think i want to implement it
+								break;
 								case 1002:
 									allMouseTrackingOff();
 									mouseButtonTracking = true;
@@ -1964,6 +1985,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									alternateScreenActive = false;
 									cursorPosition = popSavedCursor;
 									wraparoundMode = true;
+								break;
+								case 1001: // hilight tracking, this is kinda weird so i don't think i want to implement it
 								break;
 								case 9:
 								case 1000:
@@ -2113,7 +2136,7 @@ mixin template ImageSupport() {
 
 version(use_libssh2) {
 	import arsd.libssh2;
-	void startChild(alias masterFunc)() {
+	void startChild(alias masterFunc)(string host, short port, string username, string keyFile, string expectedFingerprint = null) {
 		import std.socket;
 
 		if(libssh2_init(0))
@@ -2122,7 +2145,7 @@ version(use_libssh2) {
 			libssh2_exit();
 
 		auto socket = new Socket(AddressFamily.INET, SocketType.STREAM);
-		socket.connect(new InternetAddress("arsdnet.net", 22));
+		socket.connect(new InternetAddress(host, port));
 		scope(exit) socket.close();
 
 		auto session = libssh2_session_init_ex(null, null, null, null);
@@ -2134,8 +2157,11 @@ version(use_libssh2) {
 			throw new Exception("handshake");
 
 		auto fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
+		if(expectedFingerprint !is null && fingerprint[0 .. expectedFingerprint.length] != expectedFingerprint)
+			throw new Exception("fingerprint");
 
-		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, "me".ptr, "me".length, "id_rsa.pub", "id_rsa", null))
+		import std.string : toStringz;
+		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, username.ptr, username.length, toStringz(keyFile ~ ".pub"), toStringz(keyFile), null))
 			throw new Exception("auth");
 
 
@@ -2147,7 +2173,7 @@ version(use_libssh2) {
 		scope(exit)
 			libssh2_channel_free(channel);
 
-		libssh2_channel_setenv_ex(channel, "ELVISBG".dup.ptr, "ELVISBG".length, "dark".ptr, "dark".length);
+		// libssh2_channel_setenv_ex(channel, "ELVISBG".dup.ptr, "ELVISBG".length, "dark".ptr, "dark".length);
 
 		if(libssh2_channel_request_pty_ex(channel, "xterm", "xterm".length, null, 0, 80, 24, 0, 0))
 			throw new Exception("pty");
@@ -2158,7 +2184,7 @@ version(use_libssh2) {
 		libssh2_keepalive_config(session, 0, 60);
 		libssh2_session_set_blocking(session, 0);
 
-		masterFunc(socket, channel);
+		masterFunc(socket, session, channel);
 	}
 
 } else
@@ -2523,7 +2549,7 @@ mixin template PtySupport(alias resizeHelper) {
 	}
 
 	version(use_libssh2) {
-		void readyToRead(int fd) {
+		int readyToRead(int fd) {
 			while(true) {
 				ubyte[4096] buffer;
 				auto got = libssh2_channel_read_ex(sshChannel, 0, buffer.ptr, buffer.length);
@@ -2538,12 +2564,14 @@ mixin template PtySupport(alias resizeHelper) {
 			}
 
 			if(libssh2_channel_eof(sshChannel)) {
-				//import core.sys.posix.unistd;
-				//close(fd);
-				// FIXME I think
+				libssh2_channel_close(sshChannel);
+				libssh2_channel_wait_closed(sshChannel);
+
+				return 1;
 			}
 
 			redraw();
+			return 0;
 		}
 	} else version(Windows) {
 		OVERLAPPED* overlapped;

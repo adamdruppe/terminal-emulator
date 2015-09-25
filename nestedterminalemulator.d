@@ -35,11 +35,30 @@ version(use_libssh2)
 void main(string[] args) {
 	import arsd.libssh2;
 	import std.socket;
-	void startup(Socket socket, LIBSSH2_CHANNEL* sshChannel) {
+	void startup(Socket socket, LIBSSH2_SESSION* sshSession, LIBSSH2_CHANNEL* sshChannel) {
 		// FIXME: finish this
 	}
 
-	startChild!startup();
+	if(args.length <  6) {
+		import std.format : format;
+		import std.string : toStringz;
+		auto msg = format("Provide a list of arguments like:\n%s font_size host port username keyfile\nSo for example: %s example.com 0 22 root /path/to/id_rsa\n(font size of 0 means use a system font)\nOn Windows, it might be helpful to create a shortcut with your options specified in the properties sheet command line option.", args[0], args[0]);
+
+		import std.stdio;
+		writeln(msg);
+		return;
+	}
+
+	string host = args[2];
+	import std.conv : to;
+	short port = to!short(args[3]);
+	string username = args[4];
+	string keyfile = args[5];
+	string expectedFingerprint = null;
+	if(args.length > 6)
+		expectedFingerprint = args[6];
+
+	startChild!startup(host, port, username, keyfile, expectedFingerprint);
 }
 else version(Windows)
 void main(string[] args) {
