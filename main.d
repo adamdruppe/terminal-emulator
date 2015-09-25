@@ -847,6 +847,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			painter.fillColor = clearColor;
 			painter.drawRectangle(Point(0, 0), window.width, window.height);
 			clearScreenRequested = false;
+			forceRedraw = true;
 		}
 
 		if(usingTtf) {
