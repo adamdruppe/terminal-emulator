@@ -212,7 +212,7 @@ void main(string[] args) {
 		import std.conv;
 		auto term = new TerminalEmulatorWindow(inwritePipe, outreadPipe, (args.length > 1) ? to!int(args[1]) : 0);
 
-		term.window.eventLoop(10);
+		term.window.eventLoop(0);
 	}
 
 	if(args.length < 2) {
