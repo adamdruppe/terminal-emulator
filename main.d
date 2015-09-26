@@ -297,7 +297,7 @@ struct XImagePainter {
 		if(w > i.height)
 			w = i.height;
 
-		auto srcPtr = i.getDataPointer() + i.offsetForTopLeftPixel();
+		auto srcPtr = i.getDataPointer() + i.offsetForPixel(upperLeftOfImage.x, upperLeftOfImage.y);
 		auto srcAdvance = i.adjustmentForNextLine();
 		auto srcBpp = i.bytesPerPixel();
 
@@ -511,9 +511,13 @@ XImagePainter draw(Image i, TtfFont* font, int fontWidth) {
 
 class NonCharacterData_Image : NonCharacterData {
 	Image data;
+	int imageOffsetX;
+	int imageOffsetY;
 
-	this(Image data) {
+	this(Image data, int x, int y) {
 		this.data = data;
+		this.imageOffsetX = x;
+		this.imageOffsetY = y;
 	}
 }
 
@@ -540,10 +544,13 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 		bi.representation.length = bi.width * bi.height;
 
+		Image data = Image.fromMemoryImage(mi);
+
 		int ix, iy;
 		foreach(ref cell; bi.representation) {
 			cell.ch = dchar.init;
 
+			/*
 			Image data = new Image(fontWidth, fontHeight);
 			foreach(y; 0 .. fontHeight) {
 				foreach(x; 0 .. fontWidth) {
@@ -554,6 +561,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					data.putPixel(x, y, mi.imageData.colors[(iy + y) * mi.width + (ix + x)]);
 				}
 			}
+			*/
+
+			cell.nonCharacterData = new NonCharacterData_Image(data, ix, iy);
 
 			ix += fontWidth;
 
@@ -562,7 +572,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				iy += fontHeight;
 			}
 
-			cell.nonCharacterData = new NonCharacterData_Image(data);
 		}
 
 		return bi;
@@ -984,7 +993,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				} else if(cell.nonCharacterData !is null) {
 					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
 						flushBuffer();
-						painter.drawImage(Point(posx, posy), ncdi.data, Point(0, 0), fontWidth, fontHeight);
+						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
 					}
 				}
 
