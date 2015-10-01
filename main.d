@@ -347,9 +347,15 @@ struct XImagePainter {
 
 		auto ptr = getThing(p.x, p.y);
 		foreach(i; 0 .. length) {
-			ptr[offR] = outlineColor.r;
-			ptr[offG] = outlineColor.g;
-			ptr[offB] = outlineColor.b;
+			if(rasterOp == RasterOp.normal) {
+				ptr[offR] = outlineColor.r;
+				ptr[offG] = outlineColor.g;
+				ptr[offB] = outlineColor.b;
+			} else {
+				ptr[offR] ^= outlineColor.r;
+				ptr[offG] ^= outlineColor.g;
+				ptr[offB] ^= outlineColor.b;
+			}
 			ptr = ptr[bpp .. $];
 		}
 	}
@@ -368,9 +374,15 @@ struct XImagePainter {
 
 		auto ptr = getThing(p.x, p.y);
 		foreach(i; 0 .. length) {
-			ptr[offR] = outlineColor.r;
-			ptr[offG] = outlineColor.g;
-			ptr[offB] = outlineColor.b;
+			if(rasterOp == RasterOp.normal) {
+				ptr[offR] = outlineColor.r;
+				ptr[offG] = outlineColor.g;
+				ptr[offB] = outlineColor.b;
+			} else {
+				ptr[offR] ^= outlineColor.r;
+				ptr[offG] ^= outlineColor.g;
+				ptr[offB] ^= outlineColor.b;
+			}
 			if(i+1 != length) {
 				version(Windows)
 					ptr = (ptr.ptr + nextLineAdjustment)[0 .. 100000];
@@ -397,23 +409,16 @@ struct XImagePainter {
 
 		if(outlineColor.a) {
 			drawHorizontalLine(upperLeft, width);
-			drawHorizontalLine(Point(upperLeft.x, upperLeft.y + height), width);
-			drawVerticalLine(Point(upperLeft.x, upperLeft.y), height);
-			drawVerticalLine(Point(upperLeft.x + width, upperLeft.y), height);
-		}
-
-		if(upperLeft.x + width < img.width && upperLeft.y + height < img.height) {
-			auto fuck = getThing(upperLeft.x + width, upperLeft.y + height);
-			fuck[offR] = fillColor.r;
-			fuck[offG] = fillColor.g;
-			fuck[offB] = fillColor.b;
+			drawHorizontalLine(Point(upperLeft.x, upperLeft.y + height - 1), width);
+			drawVerticalLine(Point(upperLeft.x, upperLeft.y + 1), height - 2);
+			drawVerticalLine(Point(upperLeft.x + width - 1, upperLeft.y + 1), height - 2);
 		}
 
 		if(fillColor.a) {
-			auto ptr = getThing(upperLeft.x, upperLeft.y);
-			foreach(i; 0 .. height) {
+			auto ptr = getThing(upperLeft.x + 1, upperLeft.y + 1);
+			foreach(i; 1 .. height - 1) {
 				auto iptr = ptr;
-				foreach(x; 0 .. width) {
+				foreach(x; 1 .. width - 1) {
 					if(rasterOp == RasterOp.normal) {
 						iptr[offR] = fillColor.r;
 						iptr[offG] = fillColor.g;
@@ -425,7 +430,7 @@ struct XImagePainter {
 					}
 					iptr = iptr[bpp .. $];
 				}
-				if(i+1 != height) {
+				if(i+1 != height-1) {
 					version(Windows)
 						ptr = (ptr.ptr + nextLineAdjustment)[0 .. 100000];
 					else
