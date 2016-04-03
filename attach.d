@@ -36,13 +36,15 @@ import std.socket;
 
 /*
 	FIXME: error messages aren't displayed when you attach and the socket cannot be opened
-	FIXME: SIGSTOP should be propagated too.
 
 	FIXME: activity/silence watching should make sense out of the box so default on doesn't annoy me
 	FIXME: when a session is remote attached, it steals all the screens. this causes the existing one
 	       to write out a blank session file, meaning it won't be stolen back easily. This should change
 	       so it is aware of the remote detach and just leaves things, or gracefully exits upon request.
 
+	fun facts:
+		SIGTSTP is the one we catch
+		SIGCONT is the one to send to make it continue
 	Session file example:
 
 	title: foo
@@ -166,6 +168,14 @@ void detachable_child_dead(int) {
 	wait(null);
 }
 
+bool stopRequested;
+
+extern(C) nothrow static @nogc
+void stop_requested(int) {
+	stopRequested = true;
+}
+
+
 bool debugMode;
 bool outputPaused;
 int previousScreen = 0;
@@ -204,6 +214,7 @@ void main(string[] args) {
 	import core.sys.posix.signal;
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGCHLD, &detachable_child_dead);
+	signal(SIGTSTP, &stop_requested);
 
 	import std.process;
 
@@ -224,7 +235,7 @@ void main(string[] args) {
 		session.readFromFile();
 	}
 
-	session.pid = getpid();
+	session.pid = thisProcessID();
 
 	if(session.cwd.length)
 		std.file.chdir(session.cwd);
@@ -325,6 +336,16 @@ void main(string[] args) {
 	*/
 
 	while(running) {
+		if(stopRequested) {
+			stopRequested = false;
+
+			InputMessage im;
+			im.type = InputMessage.Type.CharacterPressed;
+			im.characterEvent.character = 26; // ctrl+z
+			im.eventLength = im.sizeof;
+			write(socket.handle, &im, im.eventLength);
+		}
+
 		terminal.flush();
 		ubyte[4096] buffer;
 		fd_set rdfs;
@@ -359,6 +380,7 @@ void main(string[] args) {
 
 			if(FD_ISSET(0, &rdfs)) {
 				// the terminal is ready, we'll call next event here
+				while(running && input.anyInput_internal())
 				handleEvent(&terminal, session, input.nextEvent(), socket);
 			}
 
@@ -637,7 +659,7 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 
 			anyDemandAttention = anyDemandAttention || child.demandsAttention;
 
-			int size = 12;
+			int size = 10;
 			if(spaceRemaining < size)
 				size = spaceRemaining;
 			if(size <= 2)
@@ -789,10 +811,13 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 		case InputEvent.Type.EndOfFileEvent:
 			// assert(0);
 			// FIXME: is this right too?
+			running = false;
 		break;
 		case InputEvent.Type.HangupEvent:
 			running = false;
 		break;
+		case InputEvent.Type.KeyboardEvent:
+			break; // FIXME: KeyboardEvent replaces CharacterEvent and NonCharacterKeyEvent
 		case InputEvent.Type.CharacterEvent:
 			auto ce = event.get!(InputEvent.Type.CharacterEvent);
 			if(ce.eventType == CharacterEvent.Type.Released)

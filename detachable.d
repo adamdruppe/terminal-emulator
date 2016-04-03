@@ -152,7 +152,11 @@ class DetachableTerminalEmulator : TerminalEmulator {
 						Thread.sleep(1.msecs);
 						goto try_again;
 					}
-					assert(sent == 2 + sending.length, lastSocketError());
+					if(sent != 2 + sending.length) {
+						//, lastSocketError());
+						socket = null;
+						return;
+					}
 					/*
 					while(mustSend.length) {
 						auto sent = socket.send(frame[0 .. 2 + sending.length]);
@@ -197,6 +201,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		socket = listeningSocket.accept();
 		socket.blocking = false; // blocking is bad with the event loop, cuz it is edge triggered
 		addFileEventListeners(cast(int) socket.handle, &socketReady, null, null);
+	}
+
+	void socketError() {
+		socket = null;
 	}
 
 	void socketReady() {

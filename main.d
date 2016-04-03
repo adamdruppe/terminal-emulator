@@ -239,19 +239,21 @@ void main(string[] args) {
 		auto cmd = environment.get("SHELL", "/bin/bash");
 		startChild!startup(args.length > 2 ? args[2] : cmd, args.length > 2 ? args[2 .. $] : [cmd]);
 	} catch(Throwable t) {
+		//import std.stdio;
+		//writeln(t.toString());
 		// we might not be run from a tty to print the message, so pop it up some other way.
 		// I'm lazy so i'll just call xmessage. good enough to pop it up in the gui environment
+		version(linux) {
 		import std.process;
 		auto pipes = pipeShell("xmessage -file -");
 		pipes.stdin.write(t.toString());
 		pipes.stdin.close();
+		} else version(Windows) 
+			MessageBoxA(null, "Exception", toStringz(t.toString()), 0);
 	}
 }
 
 import simpledisplay;
-
-static if(UsingSimpledisplayX11)
-	import arsd.xwindows;
 
 import stb_truetype;
 struct XImagePainter {
@@ -600,10 +602,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	}
 
 	protected override void demandAttention() {
-		if(!focused) {
-			static if(UsingSimpledisplayX11)
-				arsd.xwindows.demandAttention(window, true);
-		}
+		window.requestAttention();
 	}
 
 	protected override void copyToClipboard(string text) {
@@ -704,8 +703,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		window.onFocusChange = (bool got) {
 			focused = got;
 			attentionReceived();
-			static if(UsingSimpledisplayX11)
-				arsd.xwindows.demandAttention(window, false);
 		};
 
 		super(desiredWidth, desiredHeight);
@@ -913,6 +910,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			painter.fillColor = Color.transparent;
 			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
 
+			// FIXME: make sure this clips correctly
 			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
 
 			hasBufferedInfo = false;
