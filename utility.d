@@ -14,7 +14,7 @@
 
 module arsd.terminalextensions;
 
-import terminal; // for sending the commands
+import arsd.terminal; // for sending the commands
 import arsd.terminalemulator; // for the various enums and small image encoding functions
 import ac = arsd.color;
 

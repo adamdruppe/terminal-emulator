@@ -356,7 +356,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		// I'm just using these to help send the crap out with the buffering...
 		import std.process;
 		environment["TERM"] = "xterm";
-		static import terminal_module = terminal;
+		static import terminal_module = arsd.terminal;
 		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, -1, null /* FIXME? */);
 		terminal._writeDelegate = &writer;
 		terminal._wrapAround = false;

@@ -130,8 +130,10 @@ version(Windows) {
 }
 
 version(use_libssh2)
-void main(string[] args) {
 	import arsd.libssh2;
+
+version(use_libssh2)
+void main(string[] args) {
 	import std.socket;
 	void startup(Socket socket, LIBSSH2_SESSION* sshSession, LIBSSH2_CHANNEL* sshChannel) {
 		import std.conv;
@@ -253,7 +255,7 @@ void main(string[] args) {
 	}
 }
 
-import simpledisplay;
+import arsd.simpledisplay;
 
 import stb_truetype;
 struct XImagePainter {
@@ -625,7 +627,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	}
 	mixin PtySupport!(resizeImage);
 
-	import simpledisplay;
+	import arsd.simpledisplay;
 	version(Posix)
 	import arsd.eventloop;
 
@@ -904,11 +906,23 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			}
 
 			assert(posx - bufferX - 1 > 0);
+
 			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
 			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
+
 			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight);
 			painter.fillColor = Color.transparent;
-			painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
+			// Hack for contrast!
+			if(bufferBackground == Color.black && !bufferReverse) {
+				// brighter than normal in some cases so i can read it easily
+				painter.outlineColor = contrastify(bufferForeground);
+			} else if(bufferBackground == Color.white && !bufferReverse) {
+				// darker than normal so i can read it
+				painter.outlineColor = antiContrastify(bufferForeground);
+			} else {
+				// normal
+				painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
+			}
 
 			// FIXME: make sure this clips correctly
 			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
@@ -1151,3 +1165,18 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		+/
 
 
+Color contrastify(Color c) {
+	if(c == Color(0xcd, 0, 0))
+		return Color.fromHsl(0, 1.0, 0.75);
+	else if(c == Color(0, 0, 0xcd))
+		return Color.fromHsl(240, 1.0, 0.75);
+	else return c;
+}
+
+Color antiContrastify(Color c) {
+	if(c == Color(0xcd, 0xcd, 0))
+		return Color.fromHsl(60, 1.0, 0.25);
+	else if(c == Color(0, 0xcd, 0xcd))
+		return Color.fromHsl(180, 1.0, 0.25);
+	else return c;
+}

@@ -17,7 +17,7 @@
 	FIXME: underlining
 */
 
-import terminal;
+import arsd.terminal;
 //import arsd.extendedterminalemulator;
 import arsd.terminalemulator;
 
@@ -287,10 +287,10 @@ class NestedTerminalEmulator : TerminalEmulator {
 			terminal.writeStringRaw("\007");
 		}
 		protected override void copyToClipboard(string text) {
-			simpledisplay.setClipboardText(simpleWindowConsole, text);
+			arsd.simpledisplay.setClipboardText(simpleWindowConsole, text);
 		}
 		protected override void pasteFromClipboard(void delegate(in char[]) dg) {
-			simpledisplay.getClipboardText(simpleWindowConsole, dg);
+			arsd.simpledisplay.getClipboardText(simpleWindowConsole, dg);
 		}
 		protected override void changeCursorStyle(CursorStyle s) {
 
@@ -309,12 +309,12 @@ class NestedTerminalEmulator : TerminalEmulator {
 	}
 
 	version(Windows) {
-		static import simpledisplay; // this is for copy/paste
-		private simpledisplay.SimpleWindow _simpleWindowConsole;
-		protected simpledisplay.SimpleWindow simpleWindowConsole() {
+		static import arsd.simpledisplay; // this is for copy/paste
+		private arsd.simpledisplay.SimpleWindow _simpleWindowConsole;
+		protected arsd.simpledisplay.SimpleWindow simpleWindowConsole() {
 			if(_simpleWindowConsole is null) {
-				auto handle = simpledisplay.GetConsoleWindow();
-				_simpleWindowConsole = new simpledisplay.SimpleWindow(handle);
+				auto handle = arsd.simpledisplay.GetConsoleWindow();
+				_simpleWindowConsole = new arsd.simpledisplay.SimpleWindow(handle);
 			}
 			return _simpleWindowConsole;
 		}

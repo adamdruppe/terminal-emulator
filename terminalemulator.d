@@ -2801,13 +2801,14 @@ immutable(Color)[] xtermPalette() {
 
 		if(paletteIdx < 16) {
 			if(paletteIdx == 7)
-				return Color(0xc0, 0xc0, 0xc0);
+				return Color(229, 229, 229); // real is 0xc0 but i think this is easier to see
 			else if(paletteIdx == 8)
 				return Color(0x80, 0x80, 0x80);
 
-			color.r = (paletteIdx & 0b001) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
-			color.g = (paletteIdx & 0b010) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
-			color.b = (paletteIdx & 0b100) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
+			// real xterm uses 0x88 here, but I prefer 0xcd because it is easier for me to see
+			color.r = (paletteIdx & 0b001) ? ((paletteIdx & 0b1000) ? 0xff : 0xcd) : 0x00;
+			color.g = (paletteIdx & 0b010) ? ((paletteIdx & 0b1000) ? 0xff : 0xcd) : 0x00;
+			color.b = (paletteIdx & 0b100) ? ((paletteIdx & 0b1000) ? 0xff : 0xcd) : 0x00;
 
 		} else if(paletteIdx < 232) {
 			// color ramp, 6x6x6 cube

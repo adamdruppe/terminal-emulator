@@ -27,7 +27,7 @@ module arsd.terminalemulatorattachutility;
 
 import arsd.detachableterminalemulatormessage;
 
-import terminal;
+import arsd.terminal;
 
 static import std.file;
 static import core.stdc.stdlib;
