@@ -6,6 +6,6 @@ all:
 	#dmd nestedterminalemulator.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop
 	#dmdw nestedterminalemulator.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/simpledisplay.d # -version=use_libssh2 /home/me/arsd/libssh2.d /home/me/arsd/libssh2.lib
 	#dmd utility ~/arsd/terminal terminalemulator ~/arsd/color -version=terminalextensions_commandline ~/arsd/png.d
-	#dmd -m64 attach message.d ~/arsd/terminal detachable.d terminalemulator.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop -debug -g # utility.d
+	dmd -m64 attach message.d ~/arsd/terminal detachable.d terminalemulator.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop -debug -g # utility.d
 	#dmd -m64 detachable.d terminalemulator.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop message.d ~/arsd/terminal.d -version=standalone_detachable -debug -g # this separate detachable is for debugging, this is also available in attach so the separate thing isn't strictly needed
 

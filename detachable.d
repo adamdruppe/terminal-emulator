@@ -382,7 +382,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
 
 			{
-				import t = terminal;
+				import t = arsd.terminal;
 				// we always work with indexes, so the fallback flag is irrelevant here
 				tbg = cell.attributes.backgroundIndex & ~0x8000;
 				tfg = cell.attributes.foregroundIndex & ~0x8000;

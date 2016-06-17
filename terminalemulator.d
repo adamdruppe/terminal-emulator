@@ -2141,6 +2141,10 @@ mixin template ImageSupport() {
 version(use_libssh2) {
 	import arsd.libssh2;
 	void startChild(alias masterFunc)(string host, short port, string username, string keyFile, string expectedFingerprint = null) {
+
+	int tries = 0;
+	try_again:
+	try {
 		import std.socket;
 
 		if(libssh2_init(0))
@@ -2191,6 +2195,15 @@ version(use_libssh2) {
 		libssh2_session_set_blocking(session, 0);
 
 		masterFunc(socket, session, channel);
+	} catch(Exception e) {
+		if(e.msg == "handshake") {
+			tries++;
+			if(tries < 5)
+				goto try_again;
+		}
+
+		throw e;
+	}
 	}
 
 } else
