@@ -257,7 +257,7 @@ void main(string[] args) {
 
 import arsd.simpledisplay;
 
-import stb_truetype;
+import arsd.ttf;
 struct XImagePainter {
 	Image img;
 	TtfFont* font;

@@ -373,13 +373,14 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			ushort tfg, tbg;
+
+			auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
+			auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
+
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
 			}
 			cell.invalidated = false;
-
-			//auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
-			//auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
 
 			{
 				import t = arsd.terminal;
@@ -403,6 +404,12 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					if(cell.selected)
 						reverse = !reverse;
 
+					if(reverse) {
+						auto tmp = fg;
+						fg = bg;
+						bg = tmp;
+					}
+
 					// reducing it to 16 color
 					// FIXME: this sucks, it should do something more sane for palette support like findNearestColor()
 					// or even reducing our palette and changing the console palette in Windows for best results
@@ -412,7 +419,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					tfg &= 0xff0f;
 					tbg &= 0xff0f;
 
-					terminal.color(tfg, tbg, terminal_module.ForceOption.automatic, reverse);
+					//if(cell.attributes.foregroundIndex & 0x8000)
+						//terminal.setTrueColor(terminal_module.RGB(fg.r, fg.g, fg.b), terminal_module.RGB(bg.r, bg.g, bg.b), terminal_module.ForceOption.automatic);
+					//else
+						terminal.color(tfg, tbg, terminal_module.ForceOption.automatic, reverse);
 					terminal.underline = cell.attributes.underlined;
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {

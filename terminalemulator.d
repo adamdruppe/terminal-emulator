@@ -358,6 +358,16 @@ class TerminalEmulator {
 		return false;
 	}
 
+	private void returnToNormalScreen() {
+		alternateScreenActive = false;
+
+		if(resizedWhileAlternate) {
+			showScrollbackOnScreen(normalScreen, 0);
+			resizeTerminal(screenWidth, screenHeight);
+			resizedWhileAlternate = false;
+		}
+	}
+
 	private int selectionStart; // an offset into the screen buffer
 	private int selectionEnd; // ditto
 
@@ -1003,7 +1013,7 @@ class TerminalEmulator {
 		// we need to make sure the state is sane all across the board, so first we'll clear everything...
 		TerminalCell plain;
 		plain.ch = ' ';
-		plain.attributes = currentAttributes;
+		plain.attributes = defaultTextAttributes;
 		plain.invalidated = true;
 		foreach(ref c; normalScreen)
 			c = plain;
@@ -1017,12 +1027,16 @@ class TerminalEmulator {
 		// charge of the normal screen didn't get the resize signal.
 		if(!alternateScreenActive)
 			showScrollbackOnScreen(normalScreen, 0);
+		else
+			resizedWhileAlternate = true;
 		// but in alternate mode, it is the application's responsibility
 
 		// the property ensures these are within bounds so this set just forces that
 		cursorY = cursorY;
 		cursorX = cursorX;
 	}
+
+	private bool resizedWhileAlternate = false;
 
 	private CursorPosition popSavedCursor() {
 		CursorPosition pos;
@@ -1986,9 +2000,10 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									// meta keys????
 								break;
 								case 1049:
-									alternateScreenActive = false;
 									cursorPosition = popSavedCursor;
 									wraparoundMode = true;
+
+									returnToNormalScreen();
 								break;
 								case 1001: // hilight tracking, this is kinda weird so i don't think i want to implement it
 								break;
@@ -2006,7 +2021,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								break;
 								case 1047:
 								case 47:
-									alternateScreenActive = false;
+									returnToNormalScreen();
 								break;
 								case 25:
 									cursorShowing = false;
