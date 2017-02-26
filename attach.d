@@ -327,13 +327,11 @@ void main(string[] args) {
 	if(socket is null)
 		return;
 
-	/*
 	// sets the icon, if set
 	if(session.icon.length) {
 		import arsd.terminalextensions;
 		changeWindowIcon(&terminal, session.icon);
 	}
-	*/
 
 	while(running) {
 		if(stopRequested) {
@@ -923,10 +921,32 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				if(escaping) {
 					switch(ev.key) {
 						case NonCharacterKeyEvent.Key.LeftArrow:
-							setActiveScreen(terminal, session, nextScreenBackwards(session));
+							if(ev.modifierState & ModifierState.alt) {
+								// alt + arrow will move the tab
+								if(session.activeScreen) {
+									auto c = session.children[session.activeScreen - 1];
+									session.children[session.activeScreen - 1] = session.children[session.activeScreen];
+									session.children[session.activeScreen] = c;
+
+									session.activeScreen--;
+								}
+								drawTaskbar(terminal, session);
+							} else
+								setActiveScreen(terminal, session, nextScreenBackwards(session));
 						break;
 						case NonCharacterKeyEvent.Key.RightArrow:
-							setActiveScreen(terminal, session, nextScreen(session));
+							if(ev.modifierState & ModifierState.alt) {
+								// alt + arrow will move the tab
+								if(session.activeScreen + 1 < session.children.length) {
+									auto c = session.children[session.activeScreen + 1];
+									session.children[session.activeScreen + 1] = session.children[session.activeScreen];
+									session.children[session.activeScreen] = c;
+
+									session.activeScreen++;
+								}
+								drawTaskbar(terminal, session);
+							} else
+								setActiveScreen(terminal, session, nextScreen(session));
 						break;
 						default:
 					}

@@ -185,7 +185,7 @@ void main(string[] args) {
 	if(args.length <  6) {
 		import std.format : format;
 		import std.string : toStringz;
-		auto msg = format("Provide a list of arguments like:\n%s font_size host port username keyfile\nSo for example: %s example.com 0 22 root /path/to/id_rsa\n(font size of 0 means use a system font)\nOn Windows, it might be helpful to create a shortcut with your options specified in the properties sheet command line option.", args[0], args[0]);
+		auto msg = format("Provide a list of arguments like:\n%s font_size host port username keyfile\nSo for example: %s 0 example.com 22 root /path/to/id_rsa\n(font size of 0 means use a system font)\nOn Windows, it might be helpful to create a shortcut with your options specified in the properties sheet command line option.", args[0], args[0]);
 
 		version(Windows)
 			MessageBoxA(null, toStringz(msg), "Couldn't start up", 0);
@@ -919,6 +919,15 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			} else if(bufferBackground == Color.white && !bufferReverse) {
 				// darker than normal so i can read it
 				painter.outlineColor = antiContrastify(bufferForeground);
+			} else if(bufferForeground == bufferBackground) {
+				// color on itself, I want it visible too
+				auto hsl = toHsl(bufferForeground, true);
+				if(hsl[2] < 0.5)
+					hsl[2] += 0.5;
+				else
+					hsl[2] -= 0.5;
+				painter.outlineColor = fromHsl(hsl[0], hsl[1], hsl[2]);
+
 			} else {
 				// normal
 				painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
@@ -1165,18 +1174,24 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		+/
 
 
+// black bg, make the colors more visible
 Color contrastify(Color c) {
 	if(c == Color(0xcd, 0, 0))
 		return Color.fromHsl(0, 1.0, 0.75);
 	else if(c == Color(0, 0, 0xcd))
 		return Color.fromHsl(240, 1.0, 0.75);
+	else if(c == Color(229, 229, 229))
+		return Color(0x99, 0x99, 0x99);
 	else return c;
 }
 
+// white bg, make them more visible
 Color antiContrastify(Color c) {
 	if(c == Color(0xcd, 0xcd, 0))
 		return Color.fromHsl(60, 1.0, 0.25);
 	else if(c == Color(0, 0xcd, 0xcd))
 		return Color.fromHsl(180, 1.0, 0.25);
+	else if(c == Color(229, 229, 229))
+		return Color(0x99, 0x99, 0x99);
 	else return c;
 }

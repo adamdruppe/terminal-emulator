@@ -358,15 +358,17 @@ class TerminalEmulator {
 		return false;
 	}
 
-	private void returnToNormalScreen() {
+	protected void returnToNormalScreen() {
 		alternateScreenActive = false;
 
-		if(resizedWhileAlternate) {
+		if(cueScrollback) {
 			showScrollbackOnScreen(normalScreen, 0);
-			resizeTerminal(screenWidth, screenHeight);
-			resizedWhileAlternate = false;
+			newLine(false);
+			cueScrollback = false;
 		}
 	}
+
+	protected void outputOccurred() { }
 
 	private int selectionStart; // an offset into the screen buffer
 	private int selectionEnd; // ditto
@@ -574,6 +576,7 @@ class TerminalEmulator {
 		TerminalCell plain;
 		plain.ch = ' ';
 		plain.attributes = currentAttributes;
+		plain.invalidated = true;
 		foreach(i, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			cell = plain;
 		}
@@ -997,6 +1000,8 @@ class TerminalEmulator {
 		cursorX = 0;
 	}
 
+	protected bool cueScrollback;
+
 	public void resizeTerminal(int w, int h) {
 		if(w == screenWidth && h == screenHeight)
 			return; // we're already good, do nothing to avoid wasting time and possibly losing a line (bash doesn't seem to like being told it "resized" to the same size)
@@ -1028,15 +1033,13 @@ class TerminalEmulator {
 		if(!alternateScreenActive)
 			showScrollbackOnScreen(normalScreen, 0);
 		else
-			resizedWhileAlternate = true;
+			cueScrollback = true;
 		// but in alternate mode, it is the application's responsibility
 
 		// the property ensures these are within bounds so this set just forces that
 		cursorY = cursorY;
 		cursorX = cursorX;
 	}
-
-	private bool resizedWhileAlternate = false;
 
 	private CursorPosition popSavedCursor() {
 		CursorPosition pos;
@@ -1281,7 +1284,15 @@ class TerminalEmulator {
 					selectionStart -= screenWidth;
 					selectionEnd -= screenWidth;
 				}
-				foreach(l; scrollZoneTop .. scrollZoneBottom)
+				foreach(l; scrollZoneTop .. scrollZoneBottom) {
+					if(alternateScreenActive) {
+						alternateScreen[idx .. idx + screenWidth] = alternateScreen[idx + screenWidth .. idx + screenWidth * 2];
+					} else {
+						normalScreen[idx .. idx + screenWidth] = normalScreen[idx + screenWidth .. idx + screenWidth * 2];
+					}
+					idx += screenWidth;
+				}
+				/*
 				foreach(i; 0 .. screenWidth) {
 					if(alternateScreenActive) {
 						alternateScreen[idx] = alternateScreen[idx + screenWidth];
@@ -1292,6 +1303,8 @@ class TerminalEmulator {
 					}
 					idx++;
 				}
+				*/
+				/*
 				foreach(i; 0 .. screenWidth) {
 					if(alternateScreenActive) {
 						alternateScreen[idx].ch = ' ';
@@ -1304,13 +1317,27 @@ class TerminalEmulator {
 					}
 					idx++;
 				}
+				*/
+
+				TerminalCell plain;
+				plain.ch = ' ';
+				plain.attributes = currentAttributes;
+				if(alternateScreenActive) {
+					alternateScreen[idx .. idx + screenWidth] = plain;
+				} else {
+					normalScreen[idx .. idx + screenWidth] = plain;
+				}
 			} else {
 				if(insertMode)
 					scrollDown();
 				else
 					cursorY = cursorY + 1;
 			}
+
+			invalidateAll = true;
 		}
+
+		protected bool invalidateAll;
 
 		void clearSelection() {
 			foreach(ref tc; alternateScreenActive ? alternateScreen : normalScreen)
@@ -1937,6 +1964,59 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								break;
 								case 1005:
 									// enable utf-8 mouse mode
+									/*
+UTF-8 (1005)
+          This enables UTF-8 encoding for Cx and Cy under all tracking
+          modes, expanding the maximum encodable position from 223 to
+          2015.  For positions less than 95, the resulting output is
+          identical under both modes.  Under extended mouse mode, posi-
+          tions greater than 95 generate "extra" bytes which will con-
+          fuse applications which do not treat their input as a UTF-8
+          stream.  Likewise, Cb will be UTF-8 encoded, to reduce confu-
+          sion with wheel mouse events.
+          Under normal mouse mode, positions outside (160,94) result in
+          byte pairs which can be interpreted as a single UTF-8 charac-
+          ter; applications which do treat their input as UTF-8 will
+          almost certainly be confused unless extended mouse mode is
+          active.
+          This scheme has the drawback that the encoded coordinates will
+          not pass through luit unchanged, e.g., for locales using non-
+          UTF-8 encoding.
+									*/
+								break;
+								case 1006:
+								/*
+SGR (1006)
+          The normal mouse response is altered to use CSI < followed by
+          semicolon-separated encoded button value, the Cx and Cy ordi-
+          nates and a final character which is M  for button press and m
+          for button release.
+          o The encoded button value in this case does not add 32 since
+            that was useful only in the X10 scheme for ensuring that the
+            byte containing the button value is a printable code.
+          o The modifiers are encoded in the same way.
+          o A different final character is used for button release to
+            resolve the X10 ambiguity regarding which button was
+            released.
+          The highlight tracking responses are also modified to an SGR-
+          like format, using the same SGR-style scheme and button-encod-
+          ings.
+								*/
+								break;
+								case 1015:
+								/*
+URXVT (1015)
+          The normal mouse response is altered to use CSI followed by
+          semicolon-separated encoded button value, the Cx and Cy ordi-
+          nates and final character M .
+          This uses the same button encoding as X10, but printing it as
+          a decimal integer rather than as a single byte.
+          However, CSI M  can be mistaken for DL (delete lines), while
+          the highlight tracking CSI T  can be mistaken for SD (scroll
+          down), and the Window manipulation controls.  For these rea-
+          sons, the 1015 control is not recommended; it is not an
+          improvement over 1005.
+								*/
 								break;
 								case 1048:
 									pushSavedCursor(cursorPosition);
@@ -1966,6 +2046,15 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							break;
 							case 34:
 								// no idea. vim inside screen sends it
+							break;
+							case 1005:
+								// turn off utf-8 mouse
+							break;
+							case 1006:
+								// turn off sgr mouse
+							break;
+							case 1015:
+								// turn off urxvt mouse
 							break;
 							default: unknownEscapeSequence(cast(string) esc);
 						}
@@ -2213,7 +2302,9 @@ version(use_libssh2) {
 	} catch(Exception e) {
 		if(e.msg == "handshake") {
 			tries++;
-			if(tries < 5)
+			import core.thread;
+			Thread.sleep(200.msecs);
+			if(tries < 10)
 				goto try_again;
 		}
 
@@ -2528,6 +2619,20 @@ final void doNothing() {}
 mixin template PtySupport(alias resizeHelper) {
 	// Initialize these!
 
+	final void redraw_() {
+		if(invalidateAll) {
+			if(alternateScreenActive)
+				foreach(ref t; alternateScreen)
+					t.invalidated = true;
+			else
+				foreach(ref t; normalScreen)
+					t.invalidated = true;
+			invalidateAll = false;
+		}
+		redraw();
+		//soundBell();
+	}
+
 	version(use_libssh2) {
 		import arsd.libssh2;
 		LIBSSH2_CHANNEL* sshChannel;
@@ -2539,7 +2644,64 @@ mixin template PtySupport(alias resizeHelper) {
 		int master;
 	}
 
+	version(use_libssh2) { }
+	else version(Posix) {
+		int previousProcess = 0;
+		int activeProcess = 0;
+		int activeProcessWhenResized = 0;
+		bool resizedRecently;
+
+		/*
+			so, this isn't perfect, but it is meant to send the resize signal to an existing process
+			when it isn't in the front when you resize.
+
+			For example, open vim and resize. Then exit vim. We want bash to be updated.
+
+			But also don't want to do too many spurious signals.
+
+			It doesn't handle the case of bash -> vim -> :sh resize, then vim gets signal but
+			the outer bash won't see it. I guess I need some kind of process stack.
+
+			but it is okish.
+		*/
+		override void outputOccurred() {
+			import core.sys.posix.unistd;
+			auto pgrp = tcgetpgrp(master);
+			if(pgrp != -1) {
+				if(pgrp != activeProcess) {
+					auto previousProcessAtStartup = previousProcess;
+
+					previousProcess = activeProcess;
+					activeProcess = pgrp;
+
+					if(resizedRecently) {
+						if(activeProcess != activeProcessWhenResized) {
+							resizedRecently = false;
+
+							if(activeProcess == previousProcessAtStartup) {
+								//import std.stdio; writeln("informing new process ", activeProcess, " of size ", screenWidth, " x ", screenHeight);
+
+								import core.sys.posix.signal;
+								kill(-activeProcess, 28 /* 28 == SIGWINCH*/);
+							}
+						}
+					}
+				}
+			}
+
+
+			super.outputOccurred();
+		}
+		//return std.file.readText("/proc/" ~ to!string(pgrp) ~ "/cmdline");
+	}
+
+
 	override void resizeTerminal(int w, int h) {
+		version(Posix) {
+			activeProcessWhenResized = activeProcess;
+			resizedRecently = true;
+		}
+
 		resizeHelper();
 
 		super.resizeTerminal(w, h);
@@ -2604,7 +2766,7 @@ mixin template PtySupport(alias resizeHelper) {
 				return 1;
 			}
 
-			redraw();
+			redraw_();
 			return 0;
 		}
 	} else version(Windows) {
@@ -2618,7 +2780,7 @@ mixin template PtySupport(alias resizeHelper) {
 
 			if(numberOfBytes) {
 				w.sendRawInput(w.overlappedBuffer[0 .. numberOfBytes]);
-				w.redraw();
+				w.redraw_();
 			}
 			import std.conv;
 
@@ -2635,7 +2797,21 @@ mixin template PtySupport(alias resizeHelper) {
 			import core.sys.posix.unistd;
 			ubyte[4096] buffer;
 
-			while(true) {
+			// the count is to limit how long we spend in this loop
+			// when it runs out, it goes back to the main event loop
+			// for a while (btw use level triggered events so the remaining
+			// data continues to get processed!) giving a chance to redraw
+			// and process user input periodically during insanely long and
+			// rapid output.
+			int cnt = 50; // the actual count is arbitrary, it just seems nice in my tests
+
+			version(arsd_te_conservative_draws)
+				cnt = 400;
+
+			// FIXME: if connected by ssh, up the count so we don't redraw as frequently.
+			// it'd save bandwidth
+
+			while(--cnt) {
 				auto len = read(fd, buffer.ptr, 4096);
 				if(len < 0) {
 					import core.stdc.errno;
@@ -2666,7 +2842,17 @@ mixin template PtySupport(alias resizeHelper) {
 				super.sendRawInput(data);
 			}
 
-			redraw();
+			outputOccurred();
+
+			redraw_();
+
+			// HACK: I don't even know why this works, but with this
+			// sleep in place, it gives X events from that socket a
+			// chance to be processed. It can add a few seconds to a huge
+			// output (like `find /usr`), but meh, that's worth it to me
+			// to have a chance to ctrl+c.
+			import core.thread;
+			Thread.sleep(dur!"msecs"(5));
 		}
 	}
 }
