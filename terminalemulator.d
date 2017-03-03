@@ -940,31 +940,35 @@ class TerminalEmulator {
 		return true;
 	}
 
-	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar) {
-		int termination = cast(int) scrollbackBuffer.length - howFar;
-		if(termination < 0)
-			termination = cast(int) scrollbackBuffer.length;
+	private bool scrollbackReflow = true;
+	public void toggleScrollbackWrap() {
+		scrollbackReflow = !scrollbackReflow;
+	}
 
-		int start = termination - screenHeight;
-		if(start < 0)
-			start = 0;
+	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar) {
+		int start;
 
 		cursorX = 0;
 		cursorY = 0;
 
-		bool reflow; // FIXME: make this a config option or something
-
-		if(reflow) {
+		if(scrollbackReflow) {
 			int numLines;
-			foreach(line; scrollbackBuffer[start .. termination]) {
-				numLines += 1 * ((line.length-1) / screenWidth);
+			foreach_reverse(idx, line; scrollbackBuffer) {
+				auto lineCount = 1 + line.length / screenWidth;
+				numLines += lineCount;
+				if(numLines >= (screenHeight + howFar)) {
+					start = cast(int) idx;
+					break;
+				}
 			}
+		} else {
+			auto termination = cast(int) scrollbackBuffer.length - howFar;
+			if(termination < 0)
+				termination = cast(int) scrollbackBuffer.length;
 
-			while(numLines > screenHeight) {
-				auto line = scrollbackBuffer[start];
-				start++;
-				numLines -= 1 * ((line.length-1) / screenWidth);
-			}
+			start = termination - screenHeight;
+			if(start < 0)
+				start = 0;
 		}
 
 		TerminalCell overflowCell;
@@ -974,7 +978,7 @@ class TerminalEmulator {
 		overflowCell.attributes.foreground = Color(40, 40, 40);
 		overflowCell.attributes.background = Color.yellow;
 
-		foreach(line; scrollbackBuffer[start .. termination]) {
+		outer: foreach(line; scrollbackBuffer[start .. $]) {
 			bool overflowed;
 			foreach(cell; line) {
 				cell.invalidated = true;
@@ -984,8 +988,10 @@ class TerminalEmulator {
 					screen[cursorY * screenWidth + cursorX] = cell;
 
 				if(cursorX == screenWidth-1) {
-					if(reflow) {
+					if(scrollbackReflow) {
 						cursorX = 0;
+						if(cursorY + 1 == screenHeight)
+							break outer;
 						cursorY = cursorY + 1;
 					} else {
 						overflowed = true;
@@ -993,6 +999,8 @@ class TerminalEmulator {
 				} else
 					cursorX = cursorX + 1;
 			}
+			if(cursorY + 1 == screenHeight)
+				break;
 			cursorY = cursorY + 1;
 			cursorX = 0;
 		}
@@ -1020,10 +1028,8 @@ class TerminalEmulator {
 		plain.ch = ' ';
 		plain.attributes = defaultTextAttributes;
 		plain.invalidated = true;
-		foreach(ref c; normalScreen)
-			c = plain;
-		foreach(ref c; alternateScreen)
-			c = plain;
+		normalScreen[] = plain;
+		alternateScreen[] = plain;
 
 		// then, in normal mode, we'll redraw using the scrollback buffer
 		//

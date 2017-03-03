@@ -746,6 +746,10 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				addOutput(to!string(r[0].msecs) ~ "\n");
 				return;
 			}
+
+			if(ev.key == Key.ScrollLock) {
+				toggleScrollbackWrap();
+			}
 			// end debug stuff
 
 

@@ -974,7 +974,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			auto msg = cast(InputMessage*) data.ptr;
 			msg.pasteEvent.pastedTextLength = cast(int) ev.pastedText.length;
 
-			terminal.writeln(ev.pastedText);
+			//terminal.writeln(ev.pastedText);
 
 			// built-in array copy complained about byte overlap. Probably alignment or something.
 			foreach(i, b; ev.pastedText)
