@@ -618,7 +618,14 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		static if(UsingSimpledisplayX11)
 			getPrimarySelection(window, dg);
 		else
-			getClipboardText(window, dg);
+			getClipboardText(window, (in char[] dataIn) {
+				char[] data;
+				// change Windows \r\n to plain \n
+				foreach(char ch; dataIn)
+					if(ch != 13)
+						data ~= ch;
+				dg(data);
+			});
 	}
 
 	void resizeImage() {
@@ -689,7 +696,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			fontHeight * desiredHeight + paddingTop * 2,
 			"Terminal Emulator",
 			OpenGlOptions.no,
-			Resizablity.allowResizing);
+			Resizability.allowResizing);
 
 		static if(UsingSimpledisplayX11) {
 			auto display = XDisplayConnection.get();
