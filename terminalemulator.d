@@ -254,7 +254,7 @@ class TerminalEmulator {
 			static int consecutiveClicks = 1;
 
 			if(button != MouseButton.wheelUp && button != MouseButton.wheelDown) {
-				if(Clock.currTime() - lastClickTime < dur!"msecs"(250))
+				if(Clock.currTime() - lastClickTime < dur!"msecs"(350))
 					consecutiveClicks++;
 				else
 					consecutiveClicks = 1;
@@ -901,8 +901,19 @@ class TerminalEmulator {
 		currentScrollback += delta;
 
 		int max = cast(int) scrollbackBuffer.length - screenHeight;
+		if(scrollbackReflow && max < 0) {
+			foreach(line; scrollbackBuffer)
+				max += cast(int) line.length / screenWidth;
+		}
+
 		if(max < 0)
 			max = 0;
+
+		if(scrollbackReflow && currentScrollback > max) {
+			foreach(line; scrollbackBuffer)
+				max += cast(int) line.length / screenWidth;
+		}
+
 		if(currentScrollback > max)
 			currentScrollback = max;
 
@@ -1271,7 +1282,9 @@ class TerminalEmulator {
 				// have to allocate here at all and actually keep lines
 				// rather than this awful cutoff thing
 				if(scrollbackBuffer.length >= 5000) {
-					scrollbackBuffer = null;
+					auto nsb = new TerminalCell[][](2000);
+					nsb[] = scrollbackBuffer[$-2000 .. $];
+					scrollbackBuffer = nsb;
 					scrollingBack = false;
 				}
 
@@ -2335,6 +2348,7 @@ version(Posix) {
 
 			wait(null);
 
+			version(with_eventloop)
 			try {
 				import arsd.eventloop;
 				if(childrenAlive <= 0)
@@ -2396,7 +2410,7 @@ version(Windows) {
 		BOOL SetHandleInformation(HANDLE, DWORD, DWORD);
 	extern(Windows)
 	HANDLE CreateNamedPipeA(
-		LPCTSTR lpName,
+		const(char)* lpName,
 		DWORD dwOpenMode,
 		DWORD dwPipeMode,
 		DWORD nMaxInstances,
@@ -2522,7 +2536,7 @@ version(Windows) {
 		if(!SetHandleInformation(outreadPipe, 1/*HANDLE_FLAG_INHERIT*/, 0))
 			throw new Exception("SetHandleInformation");
 
-		STARTUPINFO startupInfo;
+		STARTUPINFOA startupInfo;
 		startupInfo.cb = startupInfo.sizeof;
 
 		startupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -2551,11 +2565,14 @@ version(Windows) {
 
 		//term.stupidThread.join();
 
+		/* // FIXME: we should close but only if we're legit done
+		// masterFunc typically runs an event loop but it might not.
 		CloseHandle(inwritePipe);
 		CloseHandle(outreadPipe);
 
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
+		*/
 	}
 }
 

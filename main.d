@@ -678,9 +678,17 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			font.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
 			static if(UsingSimpledisplayX11) {
-				xfontstr = "-*-fixed-medium-r-*-*-14-*-*-*-*-*-*-*";
-				fontWidth = 7;
-				fontHeight = 14;
+				auto font = new OperatingSystemFont("fixed", 14, FontWeight.medium);
+				if(font.isNull) {
+					// didn't work, it is using a
+					// fallback, prolly fixed-13
+					fontWidth = 6;
+					fontHeight = 13;
+				} else {
+					xfontstr = "-*-fixed-medium-r-*-*-14-*-*-*-*-*-*-*";
+					fontWidth = 7;
+					fontHeight = 14;
+				}
 			} else version(Windows) {
 				hFont = CreateFontA(this.fontSize, 0, 0, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, "Courier New");
 				fontHeight = this.fontSize;
