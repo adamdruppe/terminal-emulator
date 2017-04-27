@@ -61,6 +61,10 @@ import arsd.eventloop;
 
 import std.socket;
 
+import psock = core.sys.posix.sys.socket;
+import core.stdc.errno;
+import core.sys.posix.unistd;
+
 extern(C)
 void detachable_terminal_sigint_handler(int sigNumber) nothrow @nogc {
 	import arsd.eventloop;
@@ -127,7 +131,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 	}
 
 	final void sendOutputMessage(OutputMessageType type, const(void)[] data) {
-		if(socket !is null) {
+		if(socket != -1) {
 			if(data.length)
 				while(data.length) {
 					auto sending = data;
@@ -146,15 +150,15 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					auto mustSend = frame[0 .. 2 + sending.length];
 						
 					try_again:
-					auto sent = socket.send(frame[0 .. 2 + sending.length]);
-					if(sent < 0 && wouldHaveBlocked()) {
+					auto sent = psock.send(socket, frame.ptr, 2 + sending.length, 0);
+					if(sent < 0 && (.errno == EAGAIN || .errno == EWOULDBLOCK)) {
 						import core.thread;
 						Thread.sleep(1.msecs);
 						goto try_again;
 					}
 					if(sent != 2 + sending.length) {
 						//, lastSocketError());
-						socket = null;
+						socket = -1;
 						return;
 					}
 					/*
@@ -174,7 +178,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 				ubyte[2] frame;
 				frame[0] = type;
 				frame[1] = 0;
-				socket.send(frame[0 .. 2]);
+				psock.send(socket, frame.ptr, 2, 0);
 				/*
 				again:
 				if(socket.send(frame) <= 0)
@@ -185,48 +189,54 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		}
 	}
 
+	override void mouseMotionTracking(bool b) {
+		super.mouseMotionTracking(b);
+		sendOutputMessage(b ? OutputMessageType.mouseTrackingOn : OutputMessageType.mouseTrackingOff, null);
+	}
+
 	mixin ForwardVirtuals!(writer);
 
 	Socket listeningSocket;
-	Socket socket;
+	int socket = -1;
 	void acceptConnection() {
 		assert(listeningSocket !is null);
 
-		if(socket !is null) {
-			sendOutputMessage(OutputMessageType.remoteDetached, null);
-			socket.close();
-			removeFileEventListeners(socket.handle);
-		}
+		import std.stdio; writeln("accept");
 
-		socket = listeningSocket.accept();
+		auto socket = listeningSocket.accept();
 		socket.blocking = false; // blocking is bad with the event loop, cuz it is edge triggered
 		addFileEventListeners(cast(int) socket.handle, &socketReady, null, null);
+
+		socket.tupleof[0] = cast(socket_t) -1; // wipe out the internal Phobos socket fd, so it doesn't get closed when it gets GC reaped
 	}
 
 	void socketError() {
-		socket = null;
+		socket = -1;
 	}
 
-	void socketReady() {
-		assert(socket !is null);
+	void socketReady(int fd) {
 		ubyte[4096] buffer;
 		int l2 = 0;
 		get_more:
-		auto len = socket.receive(buffer[l2 .. $]);
+		auto len = psock.recv(fd, buffer.ptr + l2, buffer.length - l2, 0);
+		//import std.stdio; writeln(fd, " recv ", len);
 		if(len <= 0) {
 			// we got it all if it would have blocked
-			if(wouldHaveBlocked())
+			if(.errno == EAGAIN || .errno == EWOULDBLOCK)
 				return;
 			// they closed, so we'll detach too
-			socket.shutdown(SocketShutdown.BOTH);
-			socket.close();
-			removeFileEventListeners(cast(int) socket.handle);
-			socket = null;
+			import std.stdio;
+			writeln("closing ", fd, " ", .errno,  " l2 =", l2);
+			psock.shutdown(fd, psock.SHUT_RDWR);
+			close(fd);
+			removeFileEventListeners(fd);
+			if(socket == fd)
+				socket = -1;
 			return;
 		}
 
 		auto got = buffer[0 .. len + l2];
-		assert(len > 4);
+		assert(len >= InputMessage.type.offsetof + InputMessage.type.sizeof);
 
 		while(got.length) {
 			InputMessage* im = cast(InputMessage*) got.ptr;
@@ -280,8 +290,6 @@ class DetachableTerminalEmulator : TerminalEmulator {
 						(im.mouseEvent.modifiers & InputMessage.Ctrl) ? true : false
 					))
 						redraw;
-
-
 				break;
 				case InputMessage.Type.DataPasted:
 					sendPasteData(im.pasteEvent.pastedText.ptr[0 .. im.pasteEvent.pastedTextLength]);
@@ -300,9 +308,35 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					connectionActive = false;
 				break;
 				case InputMessage.Type.Detach:
+					// FIXME
+				break;
 				case InputMessage.Type.Attach:
+					// FIXME
+					if(this.socket != -1) {
+						import std.stdio; writeln("detached from ", this.socket);
+						sendOutputMessage(OutputMessageType.remoteDetached, null);
+						close(this.socket);
+						removeFileEventListeners(this.socket);
+					}
+
+					socket = fd;
+
+					import std.stdio; writeln("attached to ", fd);
+				break;
 				case InputMessage.Type.RequestStatus:
 					// FIXME
+					// status should give: 1) current title, 2) last 3 lines of output (or something), 3) where it is attached
+					string message;
+					message ~= windowTitle;
+					message ~= "\n";
+
+					psock.send(fd, message.ptr, message.length, 0);
+
+					import std.stdio; writeln("request status");
+
+					close(fd);
+					removeFileEventListeners(fd);
+				break;
 			}
 		}
 
@@ -329,9 +363,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 			listeningSocket.shutdown(SocketShutdown.BOTH);
 			listeningSocket.close();
 		}
-		if(socket !is null) {
-			socket.shutdown(SocketShutdown.BOTH);
-			socket.close();
+		if(socket != -1) {
+			psock.shutdown(socket, psock.SHUT_RDWR);
+			close(socket);
+			socket = -1;
 		}
 	}
 
@@ -346,7 +381,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 	bool lastDrawAlternativeScreen;
 	// FIXME: a lot of code duplication between this and nestedterminalemulator
 	void redraw(bool forceRedraw = false) {
-		if(socket is null || !connectionActive)
+		if(socket == -1 || !connectionActive)
 			return;
 
 

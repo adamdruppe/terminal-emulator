@@ -732,9 +732,21 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			int termY = (ev.y - paddingTop) / fontHeight;
 			// FIXME: make sure termx and termy are in bounds
 
+			arsd.terminalemulator.MouseButton modiferStateToMouseButton() {
+				// crappy terminal can only report one button at a time anyway,
+				// so doing this in order of precedence 
+				if(ev.modifierState & ModifierState.leftButtonDown)
+					return arsd.terminalemulator.MouseButton.left;
+				if(ev.modifierState & ModifierState.rightButtonDown)
+					return arsd.terminalemulator.MouseButton.right;
+				if(ev.modifierState & ModifierState.middleButtonDown)
+					return arsd.terminalemulator.MouseButton.middle;
+				return cast(arsd.terminalemulator.MouseButton) 0;
+			}
+
 			if(sendMouseInputToApplication(termX, termY,
 				cast(arsd.terminalemulator.MouseEventType) ev.type,
-				cast(arsd.terminalemulator.MouseButton) ev.button,
+				ev.type == MouseEventType.motion ? modiferStateToMouseButton : cast(arsd.terminalemulator.MouseButton) ev.button,
 				(ev.modifierState & ModifierState.shift) ? true : false,
 				(ev.modifierState & ModifierState.ctrl) ? true : false
 			))

@@ -446,6 +446,8 @@ class TerminalEmulator {
 		}
 
 		alias TerminalKey Key;
+		import std.stdio;
+		writefln("Key: %x", cast(int) key);
 		final switch(key) {
 			case Key.Left: sendToApplicationModified(applicationCursorKeys ? "\033OD" : "\033[D"); break;
 			case Key.Up: sendToApplicationModified(applicationCursorKeys ? "\033OA" : "\033[A"); break;
@@ -1104,9 +1106,17 @@ class TerminalEmulator {
 
 		bool bracketedPasteMode;
 		bool mouseButtonTracking;
-		bool mouseMotionTracking;
+		private bool _mouseMotionTracking;
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
+
+		bool mouseMotionTracking() {
+			return _mouseMotionTracking;
+		}
+
+		void mouseMotionTracking(bool b) {
+			_mouseMotionTracking = b;
+		}
 
 		void allMouseTrackingOff() {
 			mouseMotionTracking = false;
@@ -2207,29 +2217,29 @@ URXVT (1015)
 // These match the numbers in terminal.d, so you can just cast it back and forth
 // and the names match simpledisplay.d so you can convert that automatically too
 enum TerminalKey : int {
-	Escape = 0x1b, /// .
-	F1 = 0x70, /// .
-	F2 = 0x71, /// .
-	F3 = 0x72, /// .
-	F4 = 0x73, /// .
-	F5 = 0x74, /// .
-	F6 = 0x75, /// .
-	F7 = 0x76, /// .
-	F8 = 0x77, /// .
-	F9 = 0x78, /// .
-	F10 = 0x79, /// .
-	F11 = 0x7A, /// .
-	F12 = 0x7B, /// .
-	Left = 0x25, /// .
-	Right = 0x27, /// .
-	Up = 0x26, /// .
-	Down = 0x28, /// .
-	Insert = 0x2d, /// .
-	Delete = 0x2e, /// .
-	Home = 0x24, /// .
-	End = 0x23, /// .
-	PageUp = 0x21, /// .
-	PageDown = 0x22, /// .
+	Escape = 0x1b,// + 0xF0000, /// .
+	F1 = 0x70,// + 0xF0000, /// .
+	F2 = 0x71,// + 0xF0000, /// .
+	F3 = 0x72,// + 0xF0000, /// .
+	F4 = 0x73,// + 0xF0000, /// .
+	F5 = 0x74,// + 0xF0000, /// .
+	F6 = 0x75,// + 0xF0000, /// .
+	F7 = 0x76,// + 0xF0000, /// .
+	F8 = 0x77,// + 0xF0000, /// .
+	F9 = 0x78,// + 0xF0000, /// .
+	F10 = 0x79,// + 0xF0000, /// .
+	F11 = 0x7A,// + 0xF0000, /// .
+	F12 = 0x7B,// + 0xF0000, /// .
+	Left = 0x25,// + 0xF0000, /// .
+	Right = 0x27,// + 0xF0000, /// .
+	Up = 0x26,// + 0xF0000, /// .
+	Down = 0x28,// + 0xF0000, /// .
+	Insert = 0x2d,// + 0xF0000, /// .
+	Delete = 0x2e,// + 0xF0000, /// .
+	Home = 0x24,// + 0xF0000, /// .
+	End = 0x23,// + 0xF0000, /// .
+	PageUp = 0x21,// + 0xF0000, /// .
+	PageDown = 0x22,// + 0xF0000, /// .
 }
 
 /* These match simpledisplay.d which match terminal.d, so you can just cast them */

@@ -89,6 +89,8 @@ struct Session {
 	// the filename
 	string sname;
 
+	bool mouseTrackingOn;
+
 	// not preserved in the file
 	ChildTerminal[] children;
 	int activeScreen;
@@ -186,7 +188,7 @@ void main(string[] args) {
 
 	Session session;
 
-	if(args.length > 1) {
+	if(args.length > 1 && args[1] != "--list") {
 		import std.algorithm : endsWith;
 
 		if(args.length == 2 && !endsWith(args[1], ".socket")) {
@@ -202,12 +204,37 @@ void main(string[] args) {
 		import std.file, std.process, std.stdio;
 		bool found = false;
 		auto dirName = socketDirectoryName();
+
+		string[] sessions;
+		string[] sockets;
+
 		foreach(string name; dirEntries(dirName, SpanMode.shallow)) {
-			writeln(name[dirName.length + 1 .. $]);
+			name = name[dirName.length + 1 .. $];
+			if(name[$-1] == 'n')
+				sessions ~= name[0 .. $ - ".session".length];
+			else
+				sockets ~= name[0 .. $ - ".socket".length];
 			found = true;
 		}
-		if(!found)
+		if(found) {
+			string[string] associations;
+			foreach(sessionName; sessions) {
+				auto sess = Session();
+				sess.sname = sessionName;
+				sess.readFromFile();
+
+				foreach(s; sess.screens)
+					associations[s] = sessionName;
+
+				writefln("%20s\t%d\t%d", sessionName, sess.pid, sess.screens.length);
+			}
+
+			foreach(socketName; sockets) {
+				writefln("%s.socket\t\t%s", socketName, (socketName in associations) ? associations[socketName] : "[detached]");
+			}
+		} else {
 			writeln("No screens found");
+		}
 		return;
 	}
 
@@ -250,8 +277,10 @@ void main(string[] args) {
 		auto socket = connectTo(sname);
 		if(socket is null)
 			sname = "[failed]";
-		else
+		else {
 			good = true;
+			sendSimpleMessage(socket, InputMessage.Type.Attach);
+		}
 		session.children ~= ChildTerminal(socket, sname, sname);
 
 		// we should scan inactive sockets for:
@@ -271,6 +300,8 @@ void main(string[] args) {
 		if(session.children[0].socketName == "[vacant]" || session.children[0].socketName == "[failed]")
 			session.children[0].socketName = null;
 		session.children[0].socket = connectTo(session.children[0].socketName);
+		if(auto socket = session.children[0].socket)
+			sendSimpleMessage(socket, InputMessage.Type.Attach);
 	}
 
 	void saveUpdatedSessionToFile() {
@@ -495,7 +526,12 @@ void main(string[] args) {
 							// but the idea is if one is remote detached, they all are,
 							// so we should just terminate immediately as to not write a new file
 							return;
-
+						break;
+						case OutputMessageType.mouseTrackingOn:
+							session.mouseTrackingOn = true;
+						break;
+						case OutputMessageType.mouseTrackingOff:
+							session.mouseTrackingOn = false;
 						break;
 					}
 				} else {
@@ -741,8 +777,20 @@ void attach(Terminal* terminal, ref Session session, string sname) {
 
 	auto newSocket = connectTo(sname);
 	if(newSocket) {
+		sendSimpleMessage(newSocket, InputMessage.Type.Attach);
+
 		session.children[position] = ChildTerminal(newSocket, sname, sname);
 		setActiveScreen(terminal, session, position);
+	}
+}
+
+void sendSimpleMessage(Socket socket, InputMessage.Type type) {
+	InputMessage im;
+	im.eventLength = InputMessage.type.offsetof + InputMessage.type.sizeof;
+	im.type = type;
+	auto len = socket.send((cast(ubyte*)&im)[0 .. im.eventLength]);
+	if(len <= 0) {
+		throw new Exception("wtf");
 	}
 }
 
@@ -833,6 +881,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				} else if(session.escapeCharacter != dchar.init && ce.character == session.escapeCharacter + 'a' - 1) {
 					im.type = InputMessage.Type.CharacterPressed;
 					im.characterEvent.character = 1;
+					im.eventLength = im.characterEvent.offsetof + im.CharacterEvent.sizeof;
 					eventToSend = &im;
 				} else switch(ce.character) {
 					case 'q': debugMode = !debugMode; break;
@@ -895,6 +944,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				escaping = true;
 			} else {
 				im.type = InputMessage.Type.CharacterPressed;
+				im.eventLength = im.characterEvent.offsetof + im.CharacterEvent.sizeof;
 				im.characterEvent.character = ce.character;
 				eventToSend = &im;
 			}
@@ -972,7 +1022,9 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			auto ev = event.get!(InputEvent.Type.PasteEvent);
 			auto data = new ubyte[](ev.pastedText.length + InputMessage.sizeof);
 			auto msg = cast(InputMessage*) data.ptr;
-			msg.pasteEvent.pastedTextLength = cast(int) ev.pastedText.length;
+			if(ev.pastedText.length > 4000)
+				break; // FIXME
+			msg.pasteEvent.pastedTextLength = cast(short) ev.pastedText.length;
 
 			//terminal.writeln(ev.pastedText);
 
@@ -981,7 +1033,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				msg.pasteEvent.pastedText.ptr[i] = b;
 
 			msg.type = InputMessage.Type.DataPasted;
-			msg.eventLength = cast(int) data.length;
+			msg.eventLength = cast(short) data.length;
 			eventToSend = msg;
 		break;
 		case InputEvent.Type.MouseEvent:
@@ -1001,6 +1053,8 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			final switch(me.eventType) {
 				case MouseEvent.Type.Moved:
 					im.type = InputMessage.Type.MouseMoved;
+					if(!session.mouseTrackingOn && me.buttons == 0)
+						return;
 				break;
 				case MouseEvent.Type.Pressed:
 					im.type = InputMessage.Type.MousePressed;
@@ -1014,9 +1068,9 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 
 			eventToSend = &im;
 
-			im.mouseEvent.x = me.x;
-			im.mouseEvent.y = me.y;
-			im.mouseEvent.button = cast(int) me.buttons;
+			im.mouseEvent.x = cast(short) me.x;
+			im.mouseEvent.y = cast(short) me.y;
+			im.mouseEvent.button = cast(ubyte) me.buttons;
 			im.mouseEvent.modifiers = 0;
 			if(me.modifierState & ModifierState.shift)
 				im.mouseEvent.modifiers |= InputMessage.Shift;
@@ -1067,8 +1121,8 @@ void setActiveScreen(Terminal* terminal, ref Session session, int s, bool force 
 	{
 		InputMessage im;
 		im.eventLength = im.sizeof;
-		im.sizeEvent.width = terminal.width;
-		im.sizeEvent.height = terminal.height - (session.showingTaskbar ? 1 : 0);
+		im.sizeEvent.width = cast(short) terminal.width;
+		im.sizeEvent.height = cast(short) (terminal.height - (session.showingTaskbar ? 1 : 0));
 		im.type = InputMessage.Type.SizeChanged;
 		import core.sys.posix.unistd;
 		write(socket.handle, &im, im.eventLength);

@@ -1,6 +1,8 @@
 // this module defines a message you can shoot over the socket to a detachable emulator
 module arsd.detachableterminalemulatormessage;
 
+// FIXME: the messages are 24 bytes each... they could probably be a good amount less.
+
 string socketFileName(string sessionName) {
 	import std.algorithm;
 	if(endsWith(sessionName, ".socket"))
@@ -27,10 +29,14 @@ enum OutputMessageType : ubyte {
 	NULL,
 	dataFromTerminal,
 	remoteDetached,
+	mouseTrackingOn,
+	mouseTrackingOff,
 }
 
+align(1)
 struct InputMessage {
-	enum Type : int {
+	align(1):
+	enum Type : ubyte {
 		// key event
 		KeyPressed,
 
@@ -70,42 +76,49 @@ struct InputMessage {
 	enum Ctrl = 2;
 	enum Alt = 4;
 
-	int eventLength;
+	short eventLength;
 	Type type;
 
 	struct MouseEvent {
-		int button;
-		int x;
-		int y;
+	align(1):
+		ubyte button;
+		short x;
+		short y;
 		ubyte modifiers;
 	}
 
 	struct KeyEvent {
+	align(1):
 		int key;
 		ubyte modifiers;
 	}
 
 	struct CharacterEvent {
+	align(1):
 		dchar character;
 	}
 
 	struct SizeEvent {
-		int width;
-		int height;
+	align(1):
+		short width;
+		short height;
 	}
 
 	struct PasteEvent {
-		int pastedTextLength;
+	align(1):
+		short pastedTextLength;
 		char[1] pastedText;
 	}
 
 	struct AttachEvent {
+	align(1):
 		int pid; // the pid of the attach instance
-		int sessionNameLength;
+		short sessionNameLength;
 		char[1] sessionName;
 	}
 
 	union {
+	align(1):
 		MouseEvent mouseEvent;
 		KeyEvent keyEvent;
 		CharacterEvent characterEvent;
