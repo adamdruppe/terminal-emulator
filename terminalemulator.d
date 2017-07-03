@@ -1792,13 +1792,13 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 38:
 								// xterm 256 color set foreground color
 								auto args = getArgs()[argIdx + 1 .. $];
-								if(args[0] == 2) {
+								if(args.length > 3 && args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
 									currentAttributes.foreground = Color(args[1], args[2], args[3]);
 									// and try to find a low default palette entry for maximum compatibility
 									// 0x8000 == approximation
 									currentAttributes.foregroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 16], currentAttributes.foreground);
-								} else if(args[0] == 5) {
+								} else if(args.length > 1 && args[0] == 5) {
 									// set to palette index
 									currentAttributes.foreground = palette[args[1]];
 									currentAttributes.foregroundIndex = cast(ushort) args[1];
@@ -1830,14 +1830,14 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							case 48:
 								// xterm 256 color set background color
 								auto args = getArgs()[argIdx + 1 .. $];
-								if(args[0] == 2) {
+								if(args.length > 3 && args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
 									currentAttributes.background = Color(args[1], args[2], args[3]);
 
 									// and try to find a low default palette entry for maximum compatibility
 									// 0x8000 == this is an approximation
 									currentAttributes.backgroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 8], currentAttributes.background);
-								} else if(args[0] == 5) {
+								} else if(args.length > 1 && args[0] == 5) {
 									// set to palette index
 									currentAttributes.background = palette[args[1]];
 									currentAttributes.backgroundIndex = cast(ushort) args[1];

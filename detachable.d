@@ -149,12 +149,19 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 					auto mustSend = frame[0 .. 2 + sending.length];
 						
+					int tries = 4000;
 					try_again:
 					auto sent = psock.send(socket, frame.ptr, 2 + sending.length, 0);
 					if(sent < 0 && (.errno == EAGAIN || .errno == EWOULDBLOCK)) {
 						import core.thread;
 						Thread.sleep(1.msecs);
-						goto try_again;
+						tries--;
+						if(tries)
+							goto try_again;
+						else {
+							socket = -1;
+							return;
+						}
 					}
 					if(sent != 2 + sending.length) {
 						//, lastSocketError());

@@ -671,6 +671,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		if(fontSize) {
 			this.usingTtf = true;
 			this.fontSize = fontSize;
+		} else version(Windows) {
+			if(GetSystemMetrics(SM_CYSCREEN) > 1024)
+				this.fontSize = 16;
 		}
 
 		if(usingTtf) {
@@ -681,7 +684,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				auto font = new OperatingSystemFont("fixed", 14, FontWeight.medium);
 				if(font.isNull) {
 					// didn't work, it is using a
-					// fallback, prolly fixed-13
+					// fallback, prolly fixed-13 is best
+					xfontstr = "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*";
 					fontWidth = 6;
 					fontHeight = 13;
 				} else {
