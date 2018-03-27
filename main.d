@@ -6,10 +6,10 @@
 	This is the graphical application for the terminal emulator.
 
 	Linux compile:
-	dmd main.d terminalemulator.d arsd/simpledisplay.d arsd/color.d arsd/eventloop.d -version=with_eventloop -debug arsd/png.d arsd/bmp.d arsd/stb_truetype.d -Jfont
+	dmd main.d terminalemulator.d arsd/simpledisplay.d arsd/color.d arsd/eventloop.d -version=with_eventloop -debug arsd/png.d arsd/bmp.d arsd/ttf.d -Jfont
 
 	Windows compile:
-	dmd main.d arsd\simpledisplay.d arsd\color.d -debug arsd\stb_truetype.d terminalemulator.d -Jfont arsd\png.d arsd\bmp.d
+	dmd main.d arsd\simpledisplay.d arsd\color.d -debug arsd\ttf.d terminalemulator.d -Jfont arsd\png.d arsd\bmp.d
 
 
 	The windows version expects serverside.d to be running on the other side and needs plink.exe available to speak ssh unless
