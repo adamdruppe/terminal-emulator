@@ -33,6 +33,10 @@ enum string[dchar] altMappings = [
 	// \u27e8\u27e9 or \u3008\u3009 
 ];
 
+enum string[dchar] superMappings = [
+    'j' : "Super!"
+];
+
 /*
 	FIXME
 	mouse tracking inside gnu screen always turns vim to visual mode.
@@ -814,11 +818,24 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			// remapping of alt+key is possible too, at least on linux.
 			static if(UsingSimpledisplayX11)
 			if(ev.modifierState & ModifierState.alt) {
-				if(ev.character in altMappings) {
-					sendToApplication(altMappings[ev.character]);
-					skipNextChar = true;
+                import std.stdio;
+				if(ev.key in altMappings) {
+					sendToApplication(altMappings[ev.key]);
+					//skipNextChar = true;
 				}
+                else
+                {
+                    sendToApplication("\033" ~ [cast(char)ev.key]);
+                }
 			}
+
+            static if(UsingSimpledisplayX11)
+            if(ev.modifierState & ModifierState.windows) {
+                if(ev.key in superMappings) {
+                    sendToApplication(superMappings[ev.key]);
+                    //skipNextChar = true;
+                }
+            }
 
 			return; // the character event handler will do others
 		},
