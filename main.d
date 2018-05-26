@@ -557,8 +557,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 		int ix, iy;
 		foreach(ref cell; bi.representation) {
-			cell.ch = dchar.init;
-
 			/*
 			Image data = new Image(fontWidth, fontHeight);
 			foreach(y; 0 .. fontHeight) {
@@ -752,7 +750,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				cast(arsd.terminalemulator.MouseEventType) ev.type,
 				ev.type == MouseEventType.motion ? modiferStateToMouseButton : cast(arsd.terminalemulator.MouseButton) ev.button,
 				(ev.modifierState & ModifierState.shift) ? true : false,
-				(ev.modifierState & ModifierState.ctrl) ? true : false
+				(ev.modifierState & ModifierState.ctrl) ? true : false,
+				(ev.modifierState & ModifierState.alt) ? true : false
 			))
 				redraw();
 		},
@@ -1029,7 +1028,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				}
 			}
 
-				if(cell.ch != dchar.init) {
+				if(!cell.hasNonCharacterData) {
 					char[4] str;
 					import std.utf;
 					// now that it is buffered, we do want to draw it this way...

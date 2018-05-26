@@ -21,6 +21,7 @@
 module arsd.terminalemulator;
 
 import arsd.color;
+import std.algorithm : max;
 
 enum extensionMagicIdentifier = "ARSD Terminal Emulator binary extension data follows:";
 
@@ -53,17 +54,35 @@ bool isWordSeparator(dchar ch) {
 struct ScopeBuffer(T, size_t maxSize) {
 	T[maxSize] buffer;
 	size_t length;
+	bool isNull = true;
 	T[] opSlice() { return buffer[0 .. length]; }
 	void opOpAssign(string op : "~")(in T rhs) {
-		buffer[this.length++] = rhs;
+		isNull = false;
+		if(this.length < buffer.length) // i am silently discarding more crap
+			buffer[this.length++] = rhs;
 	}
 	void opOpAssign(string op : "~")(in T[] rhs) {
+		isNull = false;
 		buffer[this.length .. this.length + rhs.length] = rhs[];
 		this.length += rhs.length;
 	}
 	void opAssign(in T[] rhs) {
+		isNull = rhs is null;
 		buffer[0 .. rhs.length] = rhs[];
 		this.length = rhs.length;
+	}
+	void opAssign(typeof(null)) {
+		isNull = true;
+		length = 0;
+	}
+	T opIndex(size_t idx) {
+		assert(!isNull);
+		assert(idx < length);
+		return buffer[idx];
+	}
+	void clear() {
+		isNull = true;
+		length = 0; 
 	}
 }
 
@@ -126,7 +145,7 @@ class TerminalEmulator {
 
 	bool dragging;
 	int lastDragX, lastDragY;
-	public bool sendMouseInputToApplication(int termX, int termY, MouseEventType type, MouseButton button, bool shift, bool ctrl) {
+	public bool sendMouseInputToApplication(int termX, int termY, MouseEventType type, MouseButton button, bool shift, bool ctrl, bool alt) {
 		if(termX < 0)
 			termX = 0;
 		if(termX >= screenWidth)
@@ -166,6 +185,8 @@ class TerminalEmulator {
 				b |= 4;
 			if(ctrl)
 				b |= 16;
+			if(alt) // sending alt as meta
+				b |= 8;
 
 			return b;
 		}
@@ -283,11 +304,11 @@ class TerminalEmulator {
 				}
 
 				if(button == MouseButton.wheelUp) {
-					scrollback(1);
+					scrollback(alt ? 0 : (ctrl ? 10 : 1), alt ? -(ctrl ? 10 : 1) : 0);
 					return true;
 				}
 				if(button == MouseButton.wheelDown) {
-					scrollback(-1);
+					scrollback(alt ? 0 : -(ctrl ? 10 : 1), alt ? (ctrl ? 10 : 1) : 0);
 					return true;
 				}
 
@@ -362,7 +383,7 @@ class TerminalEmulator {
 		alternateScreenActive = false;
 
 		if(cueScrollback) {
-			showScrollbackOnScreen(normalScreen, 0);
+			showScrollbackOnScreen(normalScreen, 0, true, 0);
 			newLine(false);
 			cueScrollback = false;
 		}
@@ -447,7 +468,7 @@ class TerminalEmulator {
 
 		alias TerminalKey Key;
 		import std.stdio;
-		writefln("Key: %x", cast(int) key);
+		// writefln("Key: %x", cast(int) key);
 		final switch(key) {
 			case Key.Left: sendToApplicationModified(applicationCursorKeys ? "\033OD" : "\033[D"); break;
 			case Key.Up: sendToApplicationModified(applicationCursorKeys ? "\033OA" : "\033[A"); break;
@@ -534,16 +555,30 @@ class TerminalEmulator {
 
 	/// .
 	static struct TextAttributes {
-		bool bold; /// .
-		bool blink; /// .
-		bool invisible; /// .
-		bool inverse; /// .
-		bool underlined; /// .
+		align(1):
+		bool bold() { return (attrStore & 1) ? true : false; } ///
+		void bold(bool t) { attrStore &= ~1; if(t) attrStore |= 1; } ///
 
-		bool italic; /// .
-		bool strikeout; /// .
+		bool blink() { return (attrStore & 2) ? true : false; } ///
+		void blink(bool t) { attrStore &= ~2; if(t) attrStore |= 2; } ///
 
-		bool faint; /// .
+		bool invisible() { return (attrStore & 4) ? true : false; } ///
+		void invisible(bool t) { attrStore &= ~4; if(t) attrStore |= 4; } ///
+
+		bool inverse() { return (attrStore & 8) ? true : false; } ///
+		void inverse(bool t) { attrStore &= ~8; if(t) attrStore |= 8; } ///
+
+		bool underlined() { return (attrStore & 16) ? true : false; } ///
+		void underlined(bool t) { attrStore &= ~16; if(t) attrStore |= 16; } ///
+
+		bool italic() { return (attrStore & 32) ? true : false; } ///
+		void italic(bool t) { attrStore &= ~32; if(t) attrStore |= 32; } ///
+
+		bool strikeout() { return (attrStore & 64) ? true : false; } ///
+		void strikeout(bool t) { attrStore &= ~64; if(t) attrStore |= 64; } ///
+
+		bool faint() { return (attrStore & 128) ? true : false; } ///
+		void faint(bool t) { attrStore &= ~128; if(t) attrStore |= 128; } ///
 
 		// if the high bit here is set, you should use the full Color values if possible, and the value here sans the high bit if not
 		ushort foregroundIndex; /// .
@@ -551,16 +586,44 @@ class TerminalEmulator {
 
 		Color foreground; /// .
 		Color background; /// .
+
+		ubyte attrStore = 0;
 	}
 
 	/// represents one terminal cell
 	static struct TerminalCell {
-		dchar ch = ' '; /// the character
-		NonCharacterData nonCharacterData; /// iff ch == dchar.init. may still be null, in which case this cell should not be drawn at all.
+		union {
+			dchar chStore = ' '; /// the character
+			NonCharacterData nonCharacterDataStore; /// iff hasNonCharacterData
+		}
+
+		dchar ch() {
+			return chStore;
+		}
+		void ch(dchar c) { 
+			hasNonCharacterData = false;
+			chStore = c;
+		}
+		NonCharacterData nonCharacterData() {
+			return nonCharacterDataStore;
+		}
+		void nonCharacterData(NonCharacterData c) {
+			hasNonCharacterData = true;
+			nonCharacterDataStore = c;
+		}
 
 		TextAttributes attributes; /// color, etc.
-		bool invalidated = true; /// if it needs to be redrawn
-		bool selected = false; /// if it is currently selected by the user (for being copied to the clipboard)
+
+		ubyte attrStore = 1;  // just invalidated to start
+
+		bool invalidated() { return (attrStore & 1) ? true : false; } /// if it needs to be redrawn
+		void invalidated(bool t) { attrStore &= ~1; if(t) attrStore |= 1; } /// ditto
+
+		bool selected() { return (attrStore & 2) ? true : false; } /// if it is currently selected by the user (for being copied to the clipboard)
+		void selected(bool t) { attrStore &= ~2; if(t) attrStore |= 2; } /// ditto
+
+		bool hasNonCharacterData() { return (attrStore & 4) ? true : false; } ///
+		void hasNonCharacterData(bool t) { attrStore &= ~4; if(t) attrStore |= 4; }
 	}
 
 	/// Cursor position, zero based. (0,0) == upper left. (0, 1) == second row, first column.
@@ -697,7 +760,7 @@ class TerminalEmulator {
 	immutable(dchar[dchar])* characterSet = null; // null means use regular UTF-8
 
 	bool readingEsc = false;
-	ubyte[] esc;
+	ScopeBuffer!(ubyte, 256) esc;
 	/// sends raw input data to the terminal as if the application printf()'d it or it echoed or whatever
 	void sendRawInput(in ubyte[] datain) {
 		const(ubyte)[] data = datain;
@@ -797,7 +860,7 @@ class TerminalEmulator {
 					(esc[0] == '[' && (b >= 64 && b <= 126)) ||
 					(esc[0] == ']' && b == '\007')))
 				{
-					tryEsc(esc);
+					tryEsc(esc[]);
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 3 && esc[0] == '%' && esc[1] == 'G') {
@@ -825,8 +888,8 @@ class TerminalEmulator {
 
 			if(b == 27) {
 				readingEsc = true;
-				debug if(esc !is null) {
-					import std.stdio; writeln("discarding esc ", cast(string) esc);
+				debug if(esc.isNull && esc.length) {
+					import std.stdio; writeln("discarding esc ", cast(string) esc[]);
 				}
 				esc = null;
 				continue;
@@ -887,11 +950,12 @@ class TerminalEmulator {
 		protected bool scrollingBack;
 
 		int currentScrollback;
+		int currentScrollbackX;
 	}
 
 	// FIXME: if it is resized while scrolling back, stuff can get messed up
 
-	void scrollback(int delta) {
+	void scrollback(int delta, int deltaX = 0) {
 		if(alternateScreenActive && !scrollingBack)
 			return;
 
@@ -901,10 +965,18 @@ class TerminalEmulator {
 			startScrollback();
 		}
 		currentScrollback += delta;
+		if(deltaX) {
+			currentScrollbackX += deltaX;
+			if(currentScrollbackX < 0) {
+				currentScrollbackX = 0;
+				scrollbackReflow = true;
+			} else
+				scrollbackReflow = false;
+		}
 
 		int max = cast(int) scrollbackBuffer.length - screenHeight;
 		if(scrollbackReflow && max < 0) {
-			foreach(line; scrollbackBuffer)
+			foreach(line; scrollbackBuffer[])
 				max += cast(int) line.length / screenWidth;
 		}
 
@@ -912,7 +984,7 @@ class TerminalEmulator {
 			max = 0;
 
 		if(scrollbackReflow && currentScrollback > max) {
-			foreach(line; scrollbackBuffer)
+			foreach(line; scrollbackBuffer[])
 				max += cast(int) line.length / screenWidth;
 		}
 
@@ -923,7 +995,7 @@ class TerminalEmulator {
 			endScrollback();
 		else {
 			cls();
-			showScrollbackOnScreen(alternateScreen, currentScrollback);
+			showScrollbackOnScreen(alternateScreen, currentScrollback, scrollbackReflow, currentScrollbackX);
 		}
 	}
 
@@ -931,6 +1003,7 @@ class TerminalEmulator {
 		if(scrollingBack)
 			return;
 		currentScrollback = 0;
+		currentScrollbackX = 0;
 		scrollingBack = true;
 		scrollbackCursorX = cursorX;
 		scrollbackCursorY = cursorY;
@@ -958,21 +1031,26 @@ class TerminalEmulator {
 		scrollbackReflow = !scrollbackReflow;
 	}
 
-	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar) {
+	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar, bool reflow, int howFarX) {
 		int start;
 
 		cursorX = 0;
 		cursorY = 0;
 
+		int excess = 0;
+
 		if(scrollbackReflow) {
 			int numLines;
-			foreach_reverse(idx, line; scrollbackBuffer) {
+			int idx = cast(int) scrollbackBuffer.length - 1;
+			foreach_reverse(line; scrollbackBuffer[]) {
 				auto lineCount = 1 + line.length / screenWidth;
 				numLines += lineCount;
 				if(numLines >= (screenHeight + howFar)) {
 					start = cast(int) idx;
+					excess = numLines - (screenHeight + howFar);
 					break;
 				}
+				idx--;
 			}
 		} else {
 			auto termination = cast(int) scrollbackBuffer.length - howFar;
@@ -992,6 +1070,18 @@ class TerminalEmulator {
 		overflowCell.attributes.background = Color.yellow;
 
 		outer: foreach(line; scrollbackBuffer[start .. $]) {
+			if(excess) {
+				line = line[excess * screenWidth .. $];
+				excess = 0;
+			}
+
+			if(howFarX) {
+				if(howFarX <= line.length)
+					line = line[howFarX .. $];
+				else
+					line = null;
+			}
+
 			bool overflowed;
 			foreach(cell; line) {
 				cell.invalidated = true;
@@ -1050,7 +1140,7 @@ class TerminalEmulator {
 		// while redrawing makes sense in theory, odds are the program in
 		// charge of the normal screen didn't get the resize signal.
 		if(!alternateScreenActive)
-			showScrollbackOnScreen(normalScreen, 0);
+			showScrollbackOnScreen(normalScreen, 0, true, 0);
 		else
 			cueScrollback = true;
 		// but in alternate mode, it is the application's responsibility
@@ -1144,7 +1234,91 @@ class TerminalEmulator {
 		TerminalCell[] normalScreen;
 
 		// the lengths can be whatever
-		TerminalCell[][] scrollbackBuffer;
+		ScrollbackBuffer scrollbackBuffer;
+
+		static struct ScrollbackBuffer {
+			TerminalCell[][] backing;
+
+			enum maxScrollback = 8192; // as a power of 2, i hope the compiler optimizes the % below to a simple bit mask...
+
+			int start;
+			int length_;
+
+			size_t length() {
+				return length_;
+			}
+
+			void opOpAssign(string op : "~")(TerminalCell[] line) {
+				if(length_ < maxScrollback) {
+					backing.assumeSafeAppend();
+					backing ~= line;
+					length_++;
+				} else {
+					// i could actually quite likely free it now too,
+					// but i'll let the GC handle it
+
+					backing[start] = line;
+					start++;
+					if(start == maxScrollback)
+						start = 0;
+				}
+			}
+
+			/*
+			int opApply(scope int delegate(ref TerminalCell[]) dg) {
+				foreach(ref l; backing)
+					if(auto res = dg(l))
+						return res;
+				return 0;
+			}
+
+			int opApplyReverse(scope int delegate(size_t, ref TerminalCell[]) dg) {
+				foreach_reverse(idx, ref l; backing)
+					if(auto res = dg(idx, l))
+						return res;
+				return 0;
+			}
+			*/
+
+			TerminalCell[] opIndex(int idx) {
+				return backing[(start + idx) % maxScrollback];
+			}
+
+			ScrollbackBufferRange opSlice(int startOfIteration, Dollar end) {
+				return ScrollbackBufferRange(&this, startOfIteration);
+			}
+			ScrollbackBufferRange opSlice() {
+				return ScrollbackBufferRange(&this, 0);
+			}
+
+			static struct ScrollbackBufferRange {
+				ScrollbackBuffer* item;
+				int position;
+				int remaining;
+				this(ScrollbackBuffer* item, int startOfIteration) {
+					this.item = item;
+					position = startOfIteration;
+					remaining = cast(int) item.length - startOfIteration;
+
+				}
+
+				TerminalCell[] front() { return (*item)[position]; }
+				bool empty() { return remaining <= 0; }
+				void popFront() {
+					position++;
+					remaining--;
+				}
+
+				TerminalCell[] back() { return (*item)[remaining - 1 - position]; }
+				void popBack() {
+					remaining--;
+				}
+			}
+
+			static struct Dollar {};
+			Dollar opDollar() { return Dollar(); }
+
+		}
 
 		struct Helper2 {
 			size_t row;
@@ -1288,19 +1462,10 @@ class TerminalEmulator {
 		bool insertMode = false;
 		void newLine(bool commitScrollback) {
 			if(!alternateScreenActive && commitScrollback) {
-				// FIXME: switch to a circular buffer so we don't
-				// have to allocate here at all and actually keep lines
-				// rather than this awful cutoff thing
-				if(scrollbackBuffer.length >= 5000) {
-					auto nsb = new TerminalCell[][](2000);
-					nsb[] = scrollbackBuffer[$-2000 .. $];
-					scrollbackBuffer = nsb;
-					scrollingBack = false;
-				}
-
-				scrollbackBuffer ~= currentScrollbackLine.dup;
+				scrollbackBuffer ~= currentScrollbackLine;
 
 				currentScrollbackLine = null;
+				currentScrollbackLine.reserve(64);
 				scrollbackWrappingAt = 0;
 			}
 
@@ -1415,26 +1580,52 @@ class TerminalEmulator {
 		}
 
 		void tryEsc(ubyte[] esc) {
+			bool[2] sidxProcessed;
+			int[][2] argsAtSidx;
+			int[12][2] argsAtSidxBuffer;
+
+			int[12][4] argsBuffer;
+			int argsBufferLocation;
+
 			int[] getArgsBase(int sidx, int[] defaults) {
+				assert(sidx == 1 || sidx == 2);
+
+				if(sidxProcessed[sidx - 1]) {
+					int[] bfr = argsBuffer[argsBufferLocation++][];
+					if(argsBufferLocation == argsBuffer.length)
+						argsBufferLocation = 0;
+					bfr[0 .. defaults.length] = defaults[];
+					foreach(idx, v; argsAtSidx[sidx - 1])
+						if(v != int.min)
+							bfr[idx] = v;
+					return bfr[0 .. max(argsAtSidx[sidx - 1].length, defaults.length)];
+				}
+
 				auto argsSection = cast(string) esc[sidx .. $-1];
-				int[] args = defaults.dup;
+				int[] args = argsAtSidxBuffer[sidx - 1][];
 
 				import std.string : split;
 				import std.conv : to;
+				int lastIdx = 0;
+
 				foreach(i, arg; split(argsSection, ";")) {
 					int value;
 					if(arg.length)
 						value = to!int(arg);
-					else if(defaults.length > i)
-						value = defaults[i];
+					else
+						value = int.min; // defaults[i];
 
 					if(args.length > i)
 						args[i] = value;
 					else
-						args ~= value;
+						assert(0);
+					lastIdx++;
 				}
 
-				return args;
+				argsAtSidx[sidx - 1] = args[0 .. lastIdx];
+				sidxProcessed[sidx - 1] = true;
+
+				return getArgsBase(sidx, defaults);
 			}
 			int[] getArgs(int[] defaults...) {
 				return getArgsBase(1, defaults);

@@ -142,6 +142,19 @@ struct Session {
 			}
 		}
 	}
+
+	void saveUpdatedSessionToFile() {
+		if(this.sname !is null) {
+			this.screens = null;
+			foreach(child; this.children) {
+				if(child.socket !is null)
+					this.screens ~= child.socketName;
+				else
+					this.screens ~= "[vacant]";
+			}
+			this.saveToFile();
+		}
+	}
 }
 
 import core.stdc.time;
@@ -188,7 +201,7 @@ void main(string[] args) {
 
 	Session session;
 
-	if(args.length > 1 && args[1] != "--list") {
+	if(args.length > 1 && args[1] != "--list" && args[1] != "--cleanup") {
 		import std.algorithm : endsWith;
 
 		if(args.length == 2 && !endsWith(args[1], ".socket")) {
@@ -226,11 +239,42 @@ void main(string[] args) {
 				foreach(s; sess.screens)
 					associations[s] = sessionName;
 
-				writefln("%20s\t%d\t%d", sessionName, sess.pid, sess.screens.length);
+				if(args.length == 2 && args[1] == "--cleanup") {
+
+				} else
+					writefln("%20s\t%d\t%d", sessionName, sess.pid, sess.screens.length);
 			}
 
 			foreach(socketName; sockets) {
-				writefln("%s.socket\t\t%s", socketName, (socketName in associations) ? associations[socketName] : "[detached]");
+				if(args.length == 2 && args[1] == "--cleanup") {
+					if(socketName !in associations) {
+						import core.stdc.stdlib;
+						static import std.file;
+						if(std.file.exists("/proc/" ~ socketName))
+							system(("attach " ~ socketName ~ ".socket" ~ "\0").ptr);
+						else
+							std.file.remove(socketDirectoryName() ~ "/" ~ socketName ~ ".socket");
+					}
+				} else {
+					writefln("%s.socket\t\t%s", socketName, (socketName in associations) ? associations[socketName] : "[detached]");
+
+					static import std.file;
+					if(std.file.exists("/proc/" ~ socketName)) {
+						auto newSocket = connectTo(socketName, false);
+						if(newSocket) {
+							sendSimpleMessage(newSocket, InputMessage.Type.RequestStatus);
+							char[1024] buffer;
+							auto read = newSocket.receive(buffer[]);
+							while(read > 0) {
+								writef("%s", buffer[0 .. read]);
+								read = newSocket.receive(buffer[]);
+							}
+							newSocket.close();
+						}
+					}
+
+
+				}
 			}
 		} else {
 			writeln("No screens found");
@@ -304,22 +348,8 @@ void main(string[] args) {
 			sendSimpleMessage(socket, InputMessage.Type.Attach);
 	}
 
-	void saveUpdatedSessionToFile() {
-		if(session.sname !is null) {
-			session.screens = null;
-			foreach(child; session.children) {
-				if(child.socket !is null)
-					session.screens ~= child.socketName;
-				else
-					session.screens ~= "[vacant]";
-			}
-			session.saveToFile();
-		}
-	}
 
-
-
-	saveUpdatedSessionToFile(); // saves the new PID
+	session.saveUpdatedSessionToFile(); // saves the new PID
 
 	// doing these just to get it in the state i want
 	auto terminal = Terminal(ConsoleOutputType.cellular);
@@ -563,7 +593,7 @@ void main(string[] args) {
 	}
 
 	session.pid = 0; // we're terminating, don't keep the pid anymore
-	saveUpdatedSessionToFile();
+	session.saveUpdatedSessionToFile();
 	 } catch(Throwable t) {
 		terminal.writeln("\n\n\n", t);
 		input.getch();
@@ -921,6 +951,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 					break;
 					case 'c':
 						attach(terminal, session, null);
+						session.saveUpdatedSessionToFile();
 					break;
 					case 'C':
 						triggerCommandLine("attach ");
@@ -1013,7 +1044,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 					im.keyEvent.modifiers |= InputMessage.Shift;
 				if(ev.modifierState & ModifierState.control)
 					im.keyEvent.modifiers |= InputMessage.Ctrl;
-				if(ev.modifierState & ModifierState.alt)
+				if((ev.modifierState & ModifierState.alt) || (ev.modifierState & ModifierState.meta))
 					im.keyEvent.modifiers |= InputMessage.Alt;
 				eventToSend = &im;
 			}
@@ -1076,7 +1107,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				im.mouseEvent.modifiers |= InputMessage.Shift;
 			if(me.modifierState & ModifierState.control)
 				im.mouseEvent.modifiers |= InputMessage.Ctrl;
-			if(me.modifierState & ModifierState.alt)
+			if(me.modifierState & ModifierState.alt || me.modifierState & ModifierState.meta)
 				im.mouseEvent.modifiers |= InputMessage.Alt;
 		break;
 		case InputEvent.Type.CustomEvent:

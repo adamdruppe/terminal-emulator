@@ -75,6 +75,8 @@ void detachable_terminal_sigint_handler(int sigNumber) nothrow @nogc {
 	}
 }
 
+static extern(C) char* ptsname(int);
+
 version(standalone_detachable)
 void main(string[] args) { detachableMain(args); }
 
@@ -294,7 +296,8 @@ class DetachableTerminalEmulator : TerminalEmulator {
 						et,
 						cast(arsd.terminalemulator.MouseButton) im.mouseEvent.button,
 						(im.mouseEvent.modifiers & InputMessage.Shift) ? true : false,
-						(im.mouseEvent.modifiers & InputMessage.Ctrl) ? true : false
+						(im.mouseEvent.modifiers & InputMessage.Ctrl) ? true : false,
+						(im.mouseEvent.modifiers & InputMessage.Alt) ? true : false
 					))
 						redraw;
 				break;
@@ -328,18 +331,46 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 					socket = fd;
 
-					import std.stdio; writeln("attached to ", fd);
+					// import std.stdio; writeln("attached to ", fd);
 				break;
 				case InputMessage.Type.RequestStatus:
 					// FIXME
 					// status should give: 1) current title, 2) last 3 lines of output (or something), 3) where it is attached
+
+					import std.conv;
+					import core.sys.posix.sys.socket;
+					import core.stdc.string;
+
 					string message;
+					message ~= "\t";
 					message ~= windowTitle;
 					message ~= "\n";
 
+					auto pts = ptsname(master);
+					message ~= "\t";
+					message ~= pts[0 .. strlen(pts)];
+					message ~= "\n";
+
+					version(linux) {
+						static struct ucred {
+							pid_t pid;
+							uid_t uid;
+							gid_t gid;
+						}
+						ucred credentials;
+						uint ucredLength = cast(uint) credentials.sizeof;
+						if(this.socket == -1) {
+							message ~= "\tDetached\n";
+
+						} else if(getsockopt(this.socket, SOL_SOCKET, 17 /* SO_PEERCRED */, &credentials, &ucredLength) == 0) {
+							message ~= "\tAttached to: " ~ to!string(credentials.pid) ~ "\n";
+							message ~= "\tAttached by: " ~ to!string(credentials.uid) ~ "\n";
+						}
+					}
+
 					psock.send(fd, message.ptr, message.length, 0);
 
-					import std.stdio; writeln("request status");
+					// import std.stdio; writeln("request status");
 
 					close(fd);
 					removeFileEventListeners(fd);

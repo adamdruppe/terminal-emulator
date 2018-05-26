@@ -264,7 +264,8 @@ class NestedTerminalEmulator : TerminalEmulator {
 					cast(arsd.terminalemulator.MouseEventType) me.eventType,
 					cast(arsd.terminalemulator.MouseButton) me.buttons,
 					(me.modifierState & ModifierState.shift) ? true : false,
-					(me.modifierState & ModifierState.control) ? true : false
+					(me.modifierState & ModifierState.control) ? true : false,
+					(me.modifierState & ModifierState.alt) ? true : false
 				))
 					redraw();
 			break;
