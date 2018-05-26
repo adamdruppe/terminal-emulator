@@ -2955,7 +2955,7 @@ mixin template PtySupport(alias resizeHelper) {
 		} else version(Windows) {
 			import std.conv;
 			uint written;
-			if(WriteFile(stdin, data.ptr, data.length, &written, null) == 0)
+			if(WriteFile(stdin, data.ptr, cast(uint)data.length, &written, null) == 0)
 				throw new Exception("WriteFile " ~ to!string(GetLastError()));
 		} else version(Posix) {
 			import core.sys.posix.unistd;
