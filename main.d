@@ -20,11 +20,8 @@
 
 // You can edit this if you like to make the alt+keys do other stuff.
 enum string[dchar] altMappings = [
-	'a' : "Cool!",
-	'A' : "Boss",
-
-	't' : "θ",
-	'p' : "\u03c6",
+	//'t' : "θ",
+	//'p' : "\u03c6",
 
 	'\'' : "\&ldquo;",
 	'\"' : "\&rdquo;",
@@ -34,7 +31,7 @@ enum string[dchar] altMappings = [
 ];
 
 enum string[dchar] superMappings = [
-    'j' : "Super!"
+	'j' : "Super!"
 ];
 
 /*
@@ -815,26 +812,32 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			}
 
 			// remapping of alt+key is possible too, at least on linux.
-			static if(UsingSimpledisplayX11)
-			if(ev.modifierState & ModifierState.alt) {
-                import std.stdio;
-				if(ev.key in altMappings) {
-					sendToApplication(altMappings[ev.key]);
-					//skipNextChar = true;
+			static if(UsingSimpledisplayX11) {
+				if(ev.modifierState & ModifierState.alt) {
+					//import std.stdio;
+					if(ev.key in altMappings) {
+						sendToApplication(altMappings[ev.key]);
+						//skipNextChar = true;
+					}
+					else {
+						char[4] str;
+						import std.utf;
+						auto data = str[0 .. encode(str, cast(dchar) ev.key)];
+						char[5] f;
+						f[0] = '\033';
+						f[1 .. 1 + data.length] = data[];
+						sendToApplication(f[0 .. 1 + data.length]);
+					}
 				}
-                else
-                {
-                    sendToApplication("\033" ~ [cast(char)ev.key]);
-                }
 			}
 
-            static if(UsingSimpledisplayX11)
-            if(ev.modifierState & ModifierState.windows) {
-                if(ev.key in superMappings) {
-                    sendToApplication(superMappings[ev.key]);
-                    //skipNextChar = true;
-                }
-            }
+			static if(UsingSimpledisplayX11)
+				if(ev.modifierState & ModifierState.windows) {
+					if(ev.key in superMappings) {
+						sendToApplication(superMappings[ev.key]);
+						//skipNextChar = true;
+					}
+			}
 
 			return; // the character event handler will do others
 		},
