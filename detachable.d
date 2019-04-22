@@ -447,8 +447,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			ushort tfg, tbg;
 
+			version(with_24_bit_color) {
 			auto bg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.foreground : cell.attributes.background;
 			auto fg = (cell.attributes.inverse != reverseVideo) ? cell.attributes.background : cell.attributes.foreground;
+			}
 
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				goto skipDrawing;
@@ -477,6 +479,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					if(cell.selected)
 						reverse = !reverse;
 
+					version(with_24_bit_color)
 					if(reverse) {
 						auto tmp = fg;
 						fg = bg;

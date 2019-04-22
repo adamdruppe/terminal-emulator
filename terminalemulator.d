@@ -55,7 +55,7 @@ struct ScopeBuffer(T, size_t maxSize) {
 	T[maxSize] buffer;
 	size_t length;
 	bool isNull = true;
-	T[] opSlice() { return buffer[0 .. length]; }
+	T[] opSlice() { return isNull ? null : buffer[0 .. length]; }
 	void opOpAssign(string op : "~")(in T rhs) {
 		isNull = false;
 		if(this.length < buffer.length) // i am silently discarding more crap
@@ -133,11 +133,34 @@ class TerminalEmulator {
 	// alt + f5 is ^[[15;3~
 	// alt+shift+f5 is ^[[15;4~
 
-	public void sendPasteData(in char[] data) {
+	private string pasteDataPending = null;
+
+	protected void justRead() {
+		if(pasteDataPending.length) {
+			sendPasteData(pasteDataPending);
+			import core.thread; Thread.sleep(50.msecs); // hack to keep it from closing, broken pipe i think
+		}
+	}
+
+	public void sendPasteData(scope const(char)[] data) {
+		//if(pasteDataPending.length)
+			//throw new Exception("paste data being discarded, wtf, shouldnt happen");
+
 		if(bracketedPasteMode)
 			sendToApplication("\033[200~");
 
-		sendToApplication(data);
+		enum MAX_PASTE_CHUNK = 4000;
+		if(data.length > MAX_PASTE_CHUNK) {
+			// need to chunk it in order to receive echos, etc,
+			// to avoid deadlocks
+			pasteDataPending = data[MAX_PASTE_CHUNK .. $].idup;
+			data = data[0 .. MAX_PASTE_CHUNK];
+		} else {
+			pasteDataPending = null;
+		}
+
+		if(data.length)
+			sendToApplication(data);
 
 		if(bracketedPasteMode)
 			sendToApplication("\033[201~");
@@ -541,15 +564,28 @@ class TerminalEmulator {
 		// I'm using the environment for this because my programs and scripts
 		// already know this variable and then it gets nicely inherited. It is
 		// also easy to set without buggering with other arguments. So works for me.
-		if(environment.get("ELVISBG") == "dark") {
-			ta.foreground = Color.white;
-			ta.background = Color.black;
-		} else {
-			ta.foreground = Color.black;
-			ta.background = Color.white;
+		version(with_24_bit_color) {
+			if(environment.get("ELVISBG") == "dark") {
+				ta.foreground = Color.white;
+				ta.background = Color.black;
+			} else {
+				ta.foreground = Color.black;
+				ta.background = Color.white;
+			}
 		}
+		if(environment.get("ELVISBG") == "dark") {
+			defaultForeground = Color.white;
+			defaultBackground = Color.black;
+		} else {
+			defaultForeground = Color.black;
+			defaultBackground = Color.white;
+		}
+
 		return ta;
 	}
+
+	Color defaultForeground;
+	Color defaultBackground;
 
 	Color[256] palette;
 
@@ -584,35 +620,47 @@ class TerminalEmulator {
 		ushort foregroundIndex; /// .
 		ushort backgroundIndex; /// .
 
-		Color foreground; /// .
-		Color background; /// .
+		version(with_24_bit_color) {
+			Color foreground; /// .
+			Color background; /// .
+		}
 
 		ubyte attrStore = 0;
 	}
 
+		//pragma(msg, TerminalCell.sizeof);
 	/// represents one terminal cell
+	align(1)
 	static struct TerminalCell {
-		union {
-			dchar chStore = ' '; /// the character
+	align(1):
+		private union {
+			struct {
+				dchar chStore = ' '; /// the character
+				TextAttributes attributesStore; /// color, etc.
+			}
 			NonCharacterData nonCharacterDataStore; /// iff hasNonCharacterData
 		}
 
 		dchar ch() {
+			assert(!hasNonCharacterData);
 			return chStore;
 		}
 		void ch(dchar c) { 
 			hasNonCharacterData = false;
 			chStore = c;
 		}
+		ref TextAttributes attributes() {
+			assert(!hasNonCharacterData);
+			return attributesStore;
+		}
 		NonCharacterData nonCharacterData() {
+			assert(hasNonCharacterData);
 			return nonCharacterDataStore;
 		}
 		void nonCharacterData(NonCharacterData c) {
 			hasNonCharacterData = true;
 			nonCharacterDataStore = c;
 		}
-
-		TextAttributes attributes; /// color, etc.
 
 		ubyte attrStore = 1;  // just invalidated to start
 
@@ -760,7 +808,7 @@ class TerminalEmulator {
 	immutable(dchar[dchar])* characterSet = null; // null means use regular UTF-8
 
 	bool readingEsc = false;
-	ScopeBuffer!(ubyte, 256) esc;
+	ScopeBuffer!(ubyte, 1024) esc;
 	/// sends raw input data to the terminal as if the application printf()'d it or it echoed or whatever
 	void sendRawInput(in ubyte[] datain) {
 		const(ubyte)[] data = datain;
@@ -1031,6 +1079,16 @@ class TerminalEmulator {
 		scrollbackReflow = !scrollbackReflow;
 	}
 
+	public void writeScrollbackToFile(string filename) {
+		import std.stdio;
+		auto file = File(filename, "wt");
+		foreach(line; scrollbackBuffer[]) {
+			foreach(c; line)
+				file.write(c.ch); // I hope this is buffered
+			file.writeln();
+		}
+	}
+
 	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar, bool reflow, int howFarX) {
 		int start;
 
@@ -1066,8 +1124,10 @@ class TerminalEmulator {
 		overflowCell.ch = '\&raquo;';
 		overflowCell.attributes.backgroundIndex = 3;
 		overflowCell.attributes.foregroundIndex = 0;
-		overflowCell.attributes.foreground = Color(40, 40, 40);
-		overflowCell.attributes.background = Color.yellow;
+		version(with_24_bit_color) {
+			overflowCell.attributes.foreground = Color(40, 40, 40);
+			overflowCell.attributes.background = Color.yellow;
+		}
 
 		outer: foreach(line; scrollbackBuffer[start .. $]) {
 			if(excess) {
@@ -1239,7 +1299,7 @@ class TerminalEmulator {
 		static struct ScrollbackBuffer {
 			TerminalCell[][] backing;
 
-			enum maxScrollback = 8192; // as a power of 2, i hope the compiler optimizes the % below to a simple bit mask...
+			enum maxScrollback = 8192 / 2; // as a power of 2, i hope the compiler optimizes the % below to a simple bit mask...
 
 			int start;
 			int length_;
@@ -1254,9 +1314,6 @@ class TerminalEmulator {
 					backing ~= line;
 					length_++;
 				} else {
-					// i could actually quite likely free it now too,
-					// but i'll let the GC handle it
-
 					backing[start] = line;
 					start++;
 					if(start == maxScrollback)
@@ -1462,7 +1519,12 @@ class TerminalEmulator {
 		bool insertMode = false;
 		void newLine(bool commitScrollback) {
 			if(!alternateScreenActive && commitScrollback) {
-				scrollbackBuffer ~= currentScrollbackLine;
+				// I am limiting this because obscenely long lines are kinda useless anyway and
+				// i don't want it to eat excessive memory when i spam some thing accidentally
+				if(currentScrollbackLine.length < 1024)
+					scrollbackBuffer ~= currentScrollbackLine;
+				else
+					scrollbackBuffer ~= currentScrollbackLine[0 .. 1024];
 
 				currentScrollbackLine = null;
 				currentScrollbackLine.reserve(64);
@@ -1601,7 +1663,7 @@ class TerminalEmulator {
 					return bfr[0 .. max(argsAtSidx[sidx - 1].length, defaults.length)];
 				}
 
-				auto argsSection = cast(string) esc[sidx .. $-1];
+				auto argsSection = cast(char[]) esc[sidx .. $-1];
 				int[] args = argsAtSidxBuffer[sidx - 1][];
 
 				import std.string : split;
@@ -1653,23 +1715,29 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						break;
 					}
 				if(idx != -1) {
-					auto arg = cast(string) esc[idx + 1 .. $-1];
-					switch(cast(string) esc[1..idx]) {
+					auto arg = cast(char[]) esc[idx + 1 .. $-1];
+					switch(cast(char[]) esc[1..idx]) {
 						case "0":
 							// icon name and window title
-							windowTitle = iconTitle = arg;
+							windowTitle = iconTitle = arg.idup;
 							changeWindowTitle(windowTitle);
 							changeIconTitle(iconTitle);
 						break;
 						case "1":
 							// icon name
-							iconTitle = arg;
+							iconTitle = arg.idup;
 							changeIconTitle(iconTitle);
 						break;
 						case "2":
 							// window title
-							windowTitle = arg;
+							windowTitle = arg.idup;
 							changeWindowTitle(windowTitle);
+						break;
+						case "10":
+							// change default text foreground color
+						break;
+						case "11":
+							// change gui background color
 						break;
 						case "12":
 							arg = arg[1 ..$];
@@ -1742,7 +1810,6 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 
 								anything out of range aborts the operation
 							*/
-
 							auto img = readSmallTextImage(arg);
 							windowIcon = img;
 							changeWindowIcon(img);
@@ -1978,6 +2045,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								nc.a = 255;
 								*/
 								currentAttributes.foregroundIndex = cast(ubyte)(arg - 30);
+								version(with_24_bit_color)
 								currentAttributes.foreground = palette[arg-30 + (currentAttributes.bold ? 8 : 0)];
 							break;
 							case 38:
@@ -1985,13 +2053,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								auto args = getArgs()[argIdx + 1 .. $];
 								if(args.length > 3 && args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
-									currentAttributes.foreground = Color(args[1], args[2], args[3]);
+									auto fg = Color(args[1], args[2], args[3]);
+									version(with_24_bit_color)
+										currentAttributes.foreground = fg;
 									// and try to find a low default palette entry for maximum compatibility
 									// 0x8000 == approximation
-									currentAttributes.foregroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 16], currentAttributes.foreground);
+									currentAttributes.foregroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 16], fg);
 								} else if(args.length > 1 && args[0] == 5) {
 									// set to palette index
-									currentAttributes.foreground = palette[args[1]];
+									version(with_24_bit_color)
+										currentAttributes.foreground = palette[args[1]];
 									currentAttributes.foregroundIndex = cast(ushort) args[1];
 								}
 								break argsLoop;
@@ -1999,7 +2070,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// default foreground color
 								auto dflt = defaultTextAttributes();
 
-								currentAttributes.foreground = dflt.foreground;
+								version(with_24_bit_color)
+									currentAttributes.foreground = dflt.foreground;
 								currentAttributes.foregroundIndex = dflt.foregroundIndex;
 							break;
 							case 40:
@@ -2016,21 +2088,25 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 
 								currentAttributes.backgroundIndex = cast(ubyte)(arg - 40);
 								//currentAttributes.background = nc;
-								currentAttributes.background = palette[arg-40];
+								version(with_24_bit_color)
+									currentAttributes.background = palette[arg-40];
 							break;
 							case 48:
 								// xterm 256 color set background color
 								auto args = getArgs()[argIdx + 1 .. $];
 								if(args.length > 3 && args[0] == 2) {
 									// set color to closest match in palette. but since we have full support, we'll just take it directly
-									currentAttributes.background = Color(args[1], args[2], args[3]);
+									auto bg = Color(args[1], args[2], args[3]);
+									version(with_24_bit_color)
+										currentAttributes.background = Color(args[1], args[2], args[3]);
 
 									// and try to find a low default palette entry for maximum compatibility
 									// 0x8000 == this is an approximation
-									currentAttributes.backgroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 8], currentAttributes.background);
+									currentAttributes.backgroundIndex = 0x8000 | cast(ushort) findNearestColor(xtermPalette[0 .. 8], bg);
 								} else if(args.length > 1 && args[0] == 5) {
 									// set to palette index
-									currentAttributes.background = palette[args[1]];
+									version(with_24_bit_color)
+										currentAttributes.background = palette[args[1]];
 									currentAttributes.backgroundIndex = cast(ushort) args[1];
 								}
 
@@ -2039,7 +2115,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// default background color
 								auto dflt = defaultTextAttributes();
 
-								currentAttributes.background = dflt.background;
+								version(with_24_bit_color)
+									currentAttributes.background = dflt.background;
 								currentAttributes.backgroundIndex = dflt.backgroundIndex;
 							break;
 							case 51:
@@ -2594,6 +2671,16 @@ version(Posix) {
 version(Windows) {
 	import core.sys.windows.windows;
 
+	version(winpty) {
+		alias HPCON = HANDLE;
+		extern(Windows)
+			HRESULT ResizePseudoConsole(HPCON, COORD);
+		extern(Windows)
+			HRESULT CreatePseudoConsole(COORD, HANDLE, HANDLE, DWORD, HPCON*);
+		extern(Windows)
+			void ClosePseudoConsole(HPCON);
+	}
+
 	extern(Windows)
 		BOOL PeekNamedPipe(HANDLE, LPVOID, DWORD, LPDWORD, LPDWORD, LPDWORD);
 	extern(Windows)
@@ -2737,6 +2824,20 @@ version(Windows) {
 		if(!SetHandleInformation(outreadPipe, 1/*HANDLE_FLAG_INHERIT*/, 0))
 			throw new Exception("SetHandleInformation");
 
+		version(winpty) {
+			HPCON hpc;
+			auto result = CreatePseudoConsole(
+				size,
+				inwritePipe,
+				outreadPipe,
+				0, // flags
+				&hpc
+			);
+
+			scope(exit)
+				ClosePseudoConsole(hpc);
+		}
+
 		STARTUPINFOA startupInfo;
 		startupInfo.cb = startupInfo.sizeof;
 
@@ -2760,7 +2861,10 @@ version(Windows) {
 		if(RegisterWaitForSingleObject(&waitHandle, pi.hProcess, &childCallback, cast(void*) GetCurrentThreadId(), INFINITE, 4 /* WT_EXECUTEINWAITTHREAD */ | 8 /* WT_EXECUTEONLYONCE */) == 0)
 			throw new Exception("RegisterWaitForSingleObject");
 
-		masterFunc(inwritePipe, outreadPipe);
+		version(winpty)
+			masterFunc(hpc, inwritePipe, outreadPipe);
+		else
+			masterFunc(inwritePipe, outreadPipe);
 
 		//stupidThreadAlive = false;
 
@@ -2940,7 +3044,14 @@ mixin template PtySupport(alias resizeHelper) {
 
 			ioctl(master, TIOCSWINSZ, &win);
 		} else version(Windows) {
-			sendToApplication([cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
+			version(winpty) {
+				COORD coord;
+				coord.x = cast(ushort) w;
+				coord.y = cast(ushort) y;
+				ResizePseudoConsole(hpc, coord);
+			} else {
+				sendToApplication([cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
+			}
 		} else static assert(0);
 	}
 
@@ -2960,9 +3071,24 @@ mixin template PtySupport(alias resizeHelper) {
 		} else version(Posix) {
 			import core.sys.posix.unistd;
 			while(data.length) {
-				auto sent = write(master, data.ptr, cast(int) data.length);
+				enum MAX_SEND = 1024 * 20;
+				auto sent = write(master, data.ptr, data.length > MAX_SEND ? MAX_SEND : cast(int) data.length);
+				//import std.stdio; writeln("ROFL ", sent, " ", data.length);
+
+				import core.stdc.errno;
+				/*
+				if(sent == -1 && errno == 11) {
+					import core.thread;
+					Thread.sleep(100.msecs);
+					//import std.stdio; writeln("lol");
+					continue; // just try again
+				}
+				*/
+
+				import std.conv;
 				if(sent < 0)
-					throw new Exception("write");
+					throw new Exception("write " ~ to!string(errno));
+
 				data = data[sent .. $];
 			}
 		} else static assert(0);
@@ -2970,6 +3096,7 @@ mixin template PtySupport(alias resizeHelper) {
 
 	version(use_libssh2) {
 		int readyToRead(int fd) {
+			int count = 0; // if too much stuff comes at once, we still want to be responsive
 			while(true) {
 				ubyte[4096] buffer;
 				auto got = libssh2_channel_read_ex(sshChannel, 0, buffer.ptr, buffer.length);
@@ -2981,6 +3108,13 @@ mixin template PtySupport(alias resizeHelper) {
 					break; // NOT an error!
 
 				super.sendRawInput(buffer[0 .. got]);
+				count++;
+
+				if(count == 5) {
+					count = 0;
+					redraw_();
+					justRead();
+				}
 			}
 
 			if(libssh2_channel_eof(sshChannel)) {
@@ -2990,7 +3124,10 @@ mixin template PtySupport(alias resizeHelper) {
 				return 1;
 			}
 
-			redraw_();
+			if(count != 0) {
+				redraw_();
+				justRead();
+			}
 			return 0;
 		}
 	} else version(Windows) {
@@ -3015,6 +3152,8 @@ mixin template PtySupport(alias resizeHelper) {
 				throw new Exception("ReadFileEx " ~ to!string(GetLastError()));
 			} else {
 			}
+
+			w.justRead();
 		}
 	} else version(Posix) {
 		void readyToRead(int fd) {
@@ -3077,6 +3216,8 @@ mixin template PtySupport(alias resizeHelper) {
 			// to have a chance to ctrl+c.
 			import core.thread;
 			Thread.sleep(dur!"msecs"(5));
+
+			justRead();
 		}
 	}
 }
@@ -3135,7 +3276,7 @@ string encodeSmallTextImage(IndexedImage ii) {
 	return s;
 }
 
-IndexedImage readSmallTextImage(string arg) {
+IndexedImage readSmallTextImage(scope const(char)[] arg) {
 	auto origArg = arg;
 	int width;
 	int height;
@@ -3222,6 +3363,7 @@ IndexedImage readSmallTextImage(string arg) {
 		auto ii = new IndexedImage(width, height);
 		ii.palette = palette;
 		ii.data = data.dup;
+
 		return ii;
 	}// else assert(0, origArg);
 	return null;

@@ -6,7 +6,7 @@
 	This is the graphical application for the terminal emulator.
 
 	Linux compile:
-	dmd main.d terminalemulator.d arsd/simpledisplay.d arsd/color.d arsd/eventloop.d -version=with_eventloop -debug arsd/png.d arsd/bmp.d arsd/ttf.d -Jfont
+	dmd main.d terminalemulator.d arsd/simpledisplay.d arsd/color.d -debug arsd/png.d arsd/bmp.d arsd/ttf.d -Jfont
 
 	Windows compile:
 	dmd main.d arsd\simpledisplay.d arsd\color.d -debug arsd\ttf.d terminalemulator.d -Jfont arsd\png.d arsd\bmp.d
@@ -109,6 +109,9 @@ Scroll down P s lines (default = 1) (SD).
 
 import arsd.terminalemulator;
 
+import arsd.minigui;
+import arsd.script;
+
 import arsd.color;
 
 struct SRectangle {
@@ -116,6 +119,28 @@ struct SRectangle {
 	int top;
 	int right;
 	int bottom;
+}
+
+class DebugWindow : MainWindow {
+	SimpleWindow window;
+	TerminalEmulator te;
+	this(SimpleWindow window, TerminalEmulator te) {
+		this.window = window;
+		this.te = te;
+		super("TE Debug", 300, 100);
+		this.win.closeQuery = delegate void () {
+			this.hide();
+		};
+		setMenuAndToolbarFromAnnotatedCode(this);
+	}
+
+	@menu("File") {
+		void Save_Scrollback() {
+			getSaveFileName( (string s) {
+				te.writeScrollbackToFile(s);
+			});
+		}
+	}
 }
 
 version(Windows) {
@@ -147,13 +172,14 @@ void main(string[] args) {
 			}
 		});
 		version(Posix) {
-			import arsd.eventloop;
-			addFileEventListeners(cast(int) socket.handle, &term.readyToRead, null, null, false);
-			addListener(delegate void(FileHup hup) {
+			auto listener = new PosixFdReader(&term.readyToRead, cast(int) socket.handle);
+			// FIXME? I don't remember why this was here.
+			globalHupHandler = (int fd, int) {
 				import core.sys.posix.unistd;
-				close(hup.fd);
-			});
-			loop();
+				close(fd);
+				EventLoop.get.exit();
+			};
+			term.eventLoop(0);
 		} else version(Windows) {
 			if(WSAAsyncSelect(socket.handle, term.window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))
 				throw new Exception("WSAAsyncSelect");
@@ -211,17 +237,32 @@ void main(string[] args) {
 else version(Windows)
 void main(string[] args) {
 	import core.sys.windows.windows;
-	void startup(HANDLE inwritePipe, HANDLE outreadPipe) {
-		import std.conv;
-		auto term = new TerminalEmulatorWindow(inwritePipe, outreadPipe, (args.length > 1) ? to!int(args[1]) : 0);
 
-		term.window.eventLoop(0);
+	version(winpty) {
+		void startup(HPCON hpc, HANDLE inwritePipe, HANDLE outreadPipe) {
+			import std.conv;
+			auto term = new TerminalEmulatorWindow(hpc, inwritePipe, outreadPipe, (args.length > 1) ? to!int(args[1]) : 0);
+
+			term.window.eventLoop(0);
+		}
+
+	} else {
+		void startup(HANDLE inwritePipe, HANDLE outreadPipe) {
+			import std.conv;
+			auto term = new TerminalEmulatorWindow(inwritePipe, outreadPipe, (args.length > 1) ? to!int(args[1]) : 0);
+
+			term.window.eventLoop(0);
+		}
 	}
 
-	if(args.length < 2) {
-		import std.stdio;
-		writeln("Give a font size and command line to run like: 0 plink.exe user@server.com -i keyfile /opt/serverside");
-		return;
+	version(winpty) {
+
+	} else {
+		if(args.length < 2) {
+			import std.stdio;
+			writeln("Give a font size and command line to run like: 0 plink.exe user@server.com -i keyfile /opt/serverside");
+			return;
+		}
 	}
 
 	import std.string;
@@ -232,8 +273,7 @@ void main(string[] args) {
 	void startup(int master) {
 		import std.conv;
 		auto term = new TerminalEmulatorWindow(master, (args.length > 1) ? to!int(args[1]) : 0);
-		import arsd.eventloop;
-		loop();
+		term.window.eventLoop(0);
 		// 
 	}
 
@@ -634,8 +674,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	mixin PtySupport!(resizeImage);
 
 	import arsd.simpledisplay;
-	version(Posix)
-	import arsd.eventloop;
 
 	TtfFont font;
 
@@ -643,6 +681,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 
 	bool usingTtf;
+
+	DebugWindow debugWindow;
 
 	version(use_libssh2)
 	this(LIBSSH2_CHANNEL* sshChannel, int fontSize = 0) {
@@ -654,15 +694,27 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		master = masterfd;
 		this(fontSize);
 	}
-	else version(Windows)
-	this(HANDLE stdin, HANDLE stdout, int fontSize = 0) {
-		this.stdin = stdin;
-		this.stdout = stdout;
-		this(fontSize);
+	else version(Windows) {
+		version(winpty)
+			this(HPCON hpc, HANDLE stdin, HANDLE stdout, int fontSize = 0) {
+				this.hpc = hpc;
+				this.stdin = stdin;
+				this.stdout = stdout;
+				this(fontSize);
+			}
+		else
+			this(HANDLE stdin, HANDLE stdout, int fontSize = 0) {
+				this.stdin = stdin;
+				this.stdout = stdout;
+				this(fontSize);
+			}
 	}
 
 	version(Windows)
 	HFONT hFont;
+
+	version(winpty)
+		HPCON hpc;
 
 	bool focused;
 
@@ -762,7 +814,10 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 			// debug stuff
 			if((ev.modifierState & ModifierState.ctrl) && (ev.modifierState & ModifierState.shift) && ev.key == Key.F12) {
-				debugMode = !debugMode;
+				if(debugWindow is null)
+					debugWindow = new DebugWindow(window, this);
+				debugWindow.show();
+				// debugMode = !debugMode;
 				return;
 			}
 
@@ -863,11 +918,15 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		} else
 		version(Posix) {
 			makeNonBlocking(master);
-			addFileEventListeners(master, &readyToRead, null, null, false); // no edge triggering, that has a nasty habit of locking us up
+			auto listener = new PosixFdReader(&readyToRead, master);
+			listener.onHup = () { EventLoop.get.exit(); };
+			// no edge triggering, that has a nasty habit of locking us up
+			/+
 			addListener(delegate void(FileHup hup) {
 				import core.sys.posix.unistd;
 				close(hup.fd);
 			});
+			+/
 		} else 
 		version(Windows) {
 			overlapped = new OVERLAPPED();
@@ -909,7 +968,10 @@ class TerminalEmulatorWindow : TerminalEmulator {
 	void redraw(bool forceRedraw = false) {
 		auto painter = window.draw();
 		if(clearScreenRequested) {
-			auto clearColor = defaultTextAttributes.background;
+			version(with_24_bit_color)
+				auto clearColor = defaultTextAttributes.background;
+			else
+				auto clearColor = defaultBackground;
 			painter.outlineColor = clearColor;
 			painter.fillColor = clearColor;
 			painter.drawRectangle(Point(0, 0), window.width, window.height);
@@ -935,6 +997,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		// on both it might also be good to keep scroll commands high level somehow. idk.
 
 		// FIXME on Windows it would definitely help a lot to do just one ExtTextOutW per line, if possible. the current code is brutally slow
+
+		// Or also see https://docs.microsoft.com/en-us/windows/desktop/api/wingdi/nf-wingdi-polytextoutw
 
 		version(Windows)
 		static if(is(T == ScreenPainter)) {
@@ -1028,16 +1092,22 @@ class TerminalEmulatorWindow : TerminalEmulator {
 					if(cell.selected)
 						reverse = !reverse;
 
-					auto fgc = cell.attributes.foreground;
-					auto bgc = cell.attributes.background;
+					version(with_24_bit_color) {
+						auto fgc = cell.attributes.foreground;
+						auto bgc = cell.attributes.background;
 
-					if(!(cell.attributes.foregroundIndex & 0xff00)) {
-						// this refers to a specific palette entry, which may change, so we should use that
-						fgc = palette[cell.attributes.foregroundIndex];
-					}
-					if(!(cell.attributes.backgroundIndex & 0xff00)) {
-						// this refers to a specific palette entry, which may change, so we should use that
-						bgc = palette[cell.attributes.backgroundIndex];
+						if(!(cell.attributes.foregroundIndex & 0xff00)) {
+							// this refers to a specific palette entry, which may change, so we should use that
+							fgc = palette[cell.attributes.foregroundIndex];
+						}
+						if(!(cell.attributes.backgroundIndex & 0xff00)) {
+							// this refers to a specific palette entry, which may change, so we should use that
+							bgc = palette[cell.attributes.backgroundIndex];
+						}
+
+					} else {
+						auto fgc = cell.attributes.foregroundIndex == 256 ? defaultForeground : palette[cell.attributes.foregroundIndex & 0xff];
+						auto bgc = cell.attributes.backgroundIndex == 256 ? defaultBackground : palette[cell.attributes.backgroundIndex & 0xff];
 					}
 
 					if(fgc != bufferForeground || bgc != bufferBackground || reverse != bufferReverse)
@@ -1236,6 +1306,8 @@ Color contrastify(Color c) {
 		return Color.fromHsl(240, 1.0, 0.75);
 	else if(c == Color(229, 229, 229))
 		return Color(0x99, 0x99, 0x99);
+	else if(c == Color.black)
+		return Color(128, 128, 128);
 	else return c;
 }
 
@@ -1247,5 +1319,7 @@ Color antiContrastify(Color c) {
 		return Color.fromHsl(180, 1.0, 0.25);
 	else if(c == Color(229, 229, 229))
 		return Color(0x99, 0x99, 0x99);
+	else if(c == Color.white)
+		return Color(128, 128, 128);
 	else return c;
 }
