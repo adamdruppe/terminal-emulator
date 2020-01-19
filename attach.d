@@ -78,6 +78,8 @@ struct Session {
 	string icon;
 	string cwd;
 	string[] screens;
+	string[] screensTitlePrefixes;
+	string autoCommand;
 	dchar escapeCharacter = 1;
 	bool showingTaskbar = true;
 
@@ -103,12 +105,14 @@ struct Session {
 		file.writeln("title: ", title);
 		file.writeln("icon: ", icon);
 		file.writeln("cwd: ", cwd);
+		file.writeln("autoCommand: ", autoCommand);
 		file.writeln("escapeCharacter: ", cast(dchar) (escapeCharacter + 'a' - 1));
 		file.writeln("showingTaskbar: ", showingTaskbar);
 		file.writeln("zeroBasedCounting: ", zeroBasedCounting);
 		file.writeln("pid: ", pid);
 		file.writeln("activeScreen: ", activeScreen);
 		file.writeln("screens: ", join(screens, " "));
+		file.writeln("screensTitlePrefixes: ", join(screensTitlePrefixes, "; "));
 	}
 
 	void readFromFile() {
@@ -128,6 +132,7 @@ struct Session {
 			switch(lhs) {
 				case "title": title = rhs.idup; break;
 				case "cwd": cwd = rhs.idup; break;
+				case "autoCommand": autoCommand = rhs.idup; break;
 				case "icon": icon = rhs.idup; break;
 				case "escapeCharacter":
 					import std.utf;
@@ -138,6 +143,7 @@ struct Session {
 				case "pid": pid = to!int(rhs); break;
 				case "activeScreen": activeScreen = to!int(rhs); break;
 				case "screens": screens = split(rhs.idup, " "); break;
+				case "screensTitlePrefixes": screensTitlePrefixes = split(line[idx + 1 .. $].stripLeft.idup, "; "); break;
 				default: continue;
 			}
 		}
@@ -146,11 +152,15 @@ struct Session {
 	void saveUpdatedSessionToFile() {
 		if(this.sname !is null) {
 			this.screens = null;
+			this.screensTitlePrefixes = null;
 			foreach(child; this.children) {
-				if(child.socket !is null)
+				if(child.socket !is null) {
 					this.screens ~= child.socketName;
-				else
+				} else {
 					this.screens ~= "[vacant]";
+				}
+
+				this.screensTitlePrefixes ~= child.titlePrefix;
 			}
 			this.saveToFile();
 		}
@@ -165,6 +175,8 @@ struct ChildTerminal {
 
 	string socketName;
 	// tab image
+
+	string titlePrefix;
 
 	bool demandsAttention;
 
@@ -272,8 +284,6 @@ void main(string[] args) {
 							newSocket.close();
 						}
 					}
-
-
 				}
 			}
 		} else {
@@ -315,7 +325,7 @@ void main(string[] args) {
 
 	foreach(idx, sname; session.screens) {
 		if(sname == "[vacant]") {
-			session.children ~= ChildTerminal(null, sname, sname);
+			session.children ~= ChildTerminal(null, sname, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
 			continue;
 		}
 		auto socket = connectTo(sname);
@@ -325,7 +335,7 @@ void main(string[] args) {
 			good = true;
 			sendSimpleMessage(socket, InputMessage.Type.Attach);
 		}
-		session.children ~= ChildTerminal(socket, sname, sname);
+		session.children ~= ChildTerminal(socket, sname, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
 
 		// we should scan inactive sockets for:
 		// 1) a bell
@@ -336,7 +346,7 @@ void main(string[] args) {
 	}
 
 	if(session.children.length == 0)
-		session.children ~= ChildTerminal(null, null, null);
+		session.children ~= ChildTerminal(null, null, null, null);
 
 	assert(session.children.length);
 
@@ -344,8 +354,12 @@ void main(string[] args) {
 		if(session.children[0].socketName == "[vacant]" || session.children[0].socketName == "[failed]")
 			session.children[0].socketName = null;
 		session.children[0].socket = connectTo(session.children[0].socketName);
-		if(auto socket = session.children[0].socket)
+		if(auto socket = session.children[0].socket) {
 			sendSimpleMessage(socket, InputMessage.Type.Attach);
+
+			if(session.autoCommand.length)
+				sendSimulatedInput(socket, session.autoCommand);
+		}
 	}
 
 
@@ -597,6 +611,10 @@ void main(string[] args) {
 	 } catch(Throwable t) {
 		terminal.writeln("\n\n\n", t);
 		input.getch();
+		input.getch();
+		input.getch();
+		input.getch();
+		input.getch();
 	 }
 }
 
@@ -666,7 +684,7 @@ Socket connectTo(ref string sname, in bool spawn = true) {
 				if(cArgs.argc) {
 					import core.stdc.string;
 					auto toOverwritePtr = cArgs.argv[0];
-					auto toOverwrite = toOverwritePtr[0 .. strlen(toOverwritePtr)];
+					auto toOverwrite = toOverwritePtr[0 .. strlen(toOverwritePtr) + 1];
 					toOverwrite[] = 0;
 					auto newName = "ATTACH";
 					if(newName.length > toOverwrite.length - 1)
@@ -732,12 +750,14 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 			if(child.title.length == 0)
 				child.title = "Screen " ~ to!string(idx + 1);
 
-			if(child.title.length <= size-2) {
-				terminal.write(child.title);
-				foreach(i; child.title.length .. size-2)
+			auto dispTitle = child.titlePrefix.length ? (child.titlePrefix ~ child.title) : child.title;
+
+			if(dispTitle.length <= size-2) {
+				terminal.write(dispTitle);
+				foreach(i; dispTitle.length .. size-2)
 					terminal.write(" ");
 			} else {
-				terminal.write(child.title[0 .. size-2]);
+				terminal.write(dispTitle[0 .. size-2]);
 			}
 			terminal.write("  ");
 			spaceRemaining -= size;
@@ -805,12 +825,15 @@ void attach(Terminal* terminal, ref Session session, string sname) {
 
 	// spin off the child process
 
-	auto newSocket = connectTo(sname);
+	auto newSocket = connectTo(sname, true);
 	if(newSocket) {
 		sendSimpleMessage(newSocket, InputMessage.Type.Attach);
 
 		session.children[position] = ChildTerminal(newSocket, sname, sname);
 		setActiveScreen(terminal, session, position);
+
+		if(session.autoCommand.length)
+			sendSimulatedInput(newSocket, session.autoCommand);
 	}
 }
 
@@ -848,6 +871,9 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 				case "attach":
 					attach(terminal, session, args.length > 1 ? args[1] : null);
 				break;
+				case "title":
+					session.children[session.activeScreen].titlePrefix = join(args[1..$], " ");
+				break;
 				default:
 			}
 
@@ -859,10 +885,33 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 	}
 
 	if(gettingListSelection) {
-		gettingListSelection = false;
-		outputPaused = false;
-		forceRedraw(terminal, session);
-		return;
+		if(event.type == InputEvent.Type.CharacterEvent) {
+			auto ce = event.get!(InputEvent.Type.CharacterEvent);
+			if(ce.eventType == CharacterEvent.Type.Released)
+				return;
+
+			switch(ce.character) {
+				case '0':
+				..
+				case '9':
+					int num = cast(int) (ce.character - '0');
+					if(!session.zeroBasedCounting) {
+						if(num == 0)
+							num = 9;
+						else
+							num--;
+					}
+					setActiveScreen(terminal, session, num);
+				goto case;
+
+				case '\n':
+					gettingListSelection = false;
+					outputPaused = false;
+					forceRedraw(terminal, session);
+					return;
+				default:
+			}
+		}
 	}
 
 	void triggerCommandLine(string text = "") {
@@ -928,7 +977,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 					break;
 					case 'D':
 						// detach only the screen
-						closeSocket(terminal, session);
+						// closeSocket(terminal, session); //  don't really like this
 					break;
 					case 'i':
 						// request information
@@ -942,7 +991,7 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 						// FIXME: finish the UI of this
 						terminal.clear();
 						foreach(idx, child; session.children)
-							terminal.writeln("\t", idx + 1, ": ", child.title, " (", child.socketName, ".socket)");
+							terminal.writeln("\t", idx + 1, ": ", child.titlePrefix, child.title, " (", child.socketName, ".socket)");
 						gettingListSelection = true;
 						outputPaused = true;
 					break;
@@ -1121,6 +1170,27 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			closeSocket(terminal, session);
 		}
 	}
+}
+
+void sendSimulatedInput(Socket socket, string input) {
+	if(input.length == 0) return;
+	if(socket is null) return;
+
+	auto data = new ubyte[](input.length + InputMessage.sizeof);
+	auto msg = cast(InputMessage*) data.ptr;
+
+	msg.pasteEvent.pastedTextLength = cast(short) input.length;
+
+	// built-in array copy complained about byte overlap. Probably alignment or something.
+	foreach(i, b; input)
+		msg.pasteEvent.pastedText.ptr[i] = b;
+
+	msg.type = InputMessage.Type.DataPasted;
+	msg.eventLength = cast(short) data.length;
+
+
+	import core.sys.posix.unistd;
+	auto len = write(socket.handle, msg, msg.eventLength);
 }
 
 void forceRedraw(Terminal* terminal, ref Session session) {

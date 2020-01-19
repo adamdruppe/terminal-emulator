@@ -123,8 +123,8 @@ struct SRectangle {
 
 class DebugWindow : MainWindow {
 	SimpleWindow window;
-	TerminalEmulator te;
-	this(SimpleWindow window, TerminalEmulator te) {
+	TerminalEmulatorWindow te;
+	this(SimpleWindow window, TerminalEmulatorWindow te) {
 		this.window = window;
 		this.te = te;
 		super("TE Debug", 300, 100);
@@ -132,6 +132,7 @@ class DebugWindow : MainWindow {
 			this.hide();
 		};
 		setMenuAndToolbarFromAnnotatedCode(this);
+		this.win.beingOpenKeepsAppOpen = false;
 	}
 
 	@menu("File") {
@@ -139,6 +140,13 @@ class DebugWindow : MainWindow {
 			getSaveFileName( (string s) {
 				te.writeScrollbackToFile(s);
 			});
+		}
+	}
+
+	@menu("Debug") {
+		version(Posix)
+		void toggleDebugOutput() {
+			te.debugMode = !te.debugMode;
 		}
 	}
 }
@@ -646,14 +654,18 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		window.requestAttention();
 	}
 
-	protected override void copyToClipboard(string text) {
+	protected override void copyToPrimary(string text) {
+		// on Windows, there is no separate PRIMARY thing,
+		// so just using the normal system clipboard.
+		//
+		// this is usually what I personally want anyway.
 		static if(UsingSimpledisplayX11)
 			setPrimarySelection(window, text);
 		else
 			setClipboardText(window, text);
 	}
 
-	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
+	protected override void pasteFromPrimary(void delegate(in char[]) dg) {
 		static if(UsingSimpledisplayX11)
 			getPrimarySelection(window, dg);
 		else
@@ -665,6 +677,21 @@ class TerminalEmulatorWindow : TerminalEmulator {
 						data ~= ch;
 				dg(data);
 			});
+	}
+
+	protected override void copyToClipboard(string text) {
+		setClipboardText(window, text);
+	}
+
+	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
+		getClipboardText(window, (in char[] dataIn) {
+			char[] data;
+			// change Windows \r\n to plain \n
+			foreach(char ch; dataIn)
+				if(ch != 13)
+					data ~= ch;
+			dg(data);
+		});
 	}
 
 	void resizeImage() {
@@ -817,7 +844,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				if(debugWindow is null)
 					debugWindow = new DebugWindow(window, this);
 				debugWindow.show();
-				// debugMode = !debugMode;
 				return;
 			}
 
@@ -859,6 +885,47 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				//// I want the escape key to send twice to differentiate it from
 				//// other escape sequences easily.
 				//case Key.Escape: sendToApplication("\033"); break;
+
+				case Key.V:
+				case Key.C:
+					if((ev.modifierState & ModifierState.shift) && (ev.modifierState & ModifierState.ctrl)) {
+						skipNextChar = true;
+						if(ev.key == Key.V)
+							pasteFromClipboard(&sendPasteData);
+						else if(ev.key == Key.C)
+							copyToClipboard(getSelectedText());
+						/+
+						if(sendKeyToApplication(
+							TerminalKey.Insert,
+							ev.key == Key.V, // shift+insert pastes...
+							false,
+							ev.key == Key.C, // ctrl+insert copies...
+							false
+						)) redraw();
+						+/
+					}
+				break;
+
+				// expansion of my own for like shift+enter to terminal.d users
+				case Key.Enter:
+				case Key.Backspace:
+				case Key.Tab:
+					if(ev.modifierState & (ModifierState.shift | ModifierState.alt | ModifierState.ctrl)) {
+						skipNextChar = true;
+						if(sendKeyToApplication(
+							cast(TerminalKey) (
+								ev.key == Key.Enter ? '\n' :
+								ev.key == Key.Tab ? '\t' :
+								ev.key == Key.Backspace ? '\b' :
+									0 /* assert(0) */
+							)
+							, (ev.modifierState & ModifierState.shift)?true:false
+							, (ev.modifierState & ModifierState.alt)?true:false
+							, (ev.modifierState & ModifierState.ctrl)?true:false
+							, (ev.modifierState & ModifierState.windows)?true:false
+						)) redraw();
+					}
+				break;
 
 				mixin(magic());
 
@@ -919,7 +986,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		version(Posix) {
 			makeNonBlocking(master);
 			auto listener = new PosixFdReader(&readyToRead, master);
-			listener.onHup = () { EventLoop.get.exit(); };
+			listener.onHup = () { import std.stdio; writeln("hup"); EventLoop.get.exit(); };
 			// no edge triggering, that has a nasty habit of locking us up
 			/+
 			addListener(delegate void(FileHup hup) {

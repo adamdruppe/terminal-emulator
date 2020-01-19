@@ -115,6 +115,9 @@ class TerminalEmulator {
 	protected abstract void copyToClipboard(string); /// copy the given data to the clipboard (or you can do nothing if you can't)
 	protected abstract void pasteFromClipboard(void delegate(in char[])); /// requests a paste. we pass it a delegate that should accept the data
 
+	protected abstract void copyToPrimary(string); /// copy the given data to the PRIMARY X selection (or you can do nothing if you can't)
+	protected abstract void pasteFromPrimary(void delegate(in char[])); /// requests a paste from PRIMARY. we pass it a delegate that should accept the data
+
 	/// Signal the UI that some attention should be given, e.g. blink the taskbar or sound the bell.
 	/// The default is to ignore the demand by instantly acknowledging it - if you override this, do NOT call super().
 	protected void demandAttention() {
@@ -164,6 +167,10 @@ class TerminalEmulator {
 
 		if(bracketedPasteMode)
 			sendToApplication("\033[201~");
+	}
+
+	public string getSelectedText() {
+		return getPlainText(selectionStart, selectionEnd);
 	}
 
 	bool dragging;
@@ -221,9 +228,9 @@ class TerminalEmulator {
 				return false;
 
 			if(dragging) {
-				auto text = getPlainText(selectionStart, selectionEnd);
+				auto text = getSelectedText();
 				if(text.length) {
-					copyToClipboard(text);
+					copyToPrimary(text);
 				}
 			}
 
@@ -323,7 +330,7 @@ class TerminalEmulator {
 				sendToApplication(buffer[]);
 			} else {
 				if(button == MouseButton.middle) {
-					pasteFromClipboard(&sendPasteData);
+					pasteFromPrimary(&sendPasteData);
 				}
 
 				if(button == MouseButton.wheelUp) {
@@ -392,7 +399,7 @@ class TerminalEmulator {
 
 					auto text = getPlainText(selectionStart, selectionEnd);
 					if(text.length) {
-						copyToClipboard(text);
+						copyToPrimary(text);
 					}
 					return true;
 				}
@@ -522,6 +529,11 @@ class TerminalEmulator {
 			case Key.F12: sendToApplicationModified("\033[24~"); break;
 
 			case Key.Escape: sendToApplicationModified("\033"); break;
+
+			// see terminal.d for the other side of this
+			case cast(TerminalKey) '\n': sendToApplicationModified("\033[83~"); break;
+			case cast(TerminalKey) '\b': sendToApplicationModified("\033[78~"); break;
+			case cast(TerminalKey) '\t': sendToApplicationModified("\033[79~"); break;
 		}
 
 		return redrawRequired;
@@ -960,8 +972,11 @@ class TerminalEmulator {
 
 			if(b == 9) {
 				int howMany = 8 - (cursorX % 8);
-				foreach(i; 0 .. howMany)
-					addOutput(' '); // FIXME: it would be nice to actually put a tab character there for copy/paste accuracy (ditto with newlines actually)
+				// so apparently it is just supposed to move the cursor.
+				// it breaks mutt to output spaces
+				cursorX = cursorX + howMany;
+				//foreach(i; 0 .. howMany)
+					//addOutput(' '); // FIXME: it would be nice to actually put a tab character there for copy/paste accuracy (ditto with newlines actually)
 				continue;
 			}
 
@@ -1542,8 +1557,12 @@ class TerminalEmulator {
 				}
 				foreach(l; scrollZoneTop .. scrollZoneBottom) {
 					if(alternateScreenActive) {
+						if(idx + screenWidth * 2 > alternateScreen.length)
+							break;
 						alternateScreen[idx .. idx + screenWidth] = alternateScreen[idx + screenWidth .. idx + screenWidth * 2];
 					} else {
+						if(idx + screenWidth * 2 > normalScreen.length)
+							break;
 						normalScreen[idx .. idx + screenWidth] = normalScreen[idx + screenWidth .. idx + screenWidth * 2];
 					}
 					idx += screenWidth;
@@ -1740,7 +1759,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// change gui background color
 						break;
 						case "12":
-							arg = arg[1 ..$];
+							if(arg.length)
+								arg = arg[1 ..$]; // skip past the thing
 							if(arg.length) {
 								cursorColor = Color.fromString(arg);
 								foreach(ref p; cursorColor.components[0 .. 3])
@@ -1760,8 +1780,21 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							if(arg == "p;?") {
 								// i'm using this to request a paste. not quite compatible with xterm, but kinda
 								// because xterm tends not to answer anyway.
-								pasteFromClipboard(&sendPasteData);
+								pasteFromPrimary(&sendPasteData);
 							} else if(arg.length > 2 && arg[0 .. 2] == "p;") {
+								auto info = arg[2 .. $];
+								try {
+									import std.base64;
+									auto data = Base64.decode(info);
+									copyToPrimary(cast(string) data);
+								} catch(Exception e)  {}
+							}
+
+							if(arg == "c;?") {
+								// i'm using this to request a paste. not quite compatible with xterm, but kinda
+								// because xterm tends not to answer anyway.
+								pasteFromClipboard(&sendPasteData);
+							} else if(arg.length > 2 && arg[0 .. 2] == "c;") {
 								auto info = arg[2 .. $];
 								try {
 									import std.base64;
@@ -1769,6 +1802,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									copyToClipboard(cast(string) data);
 								} catch(Exception e)  {}
 							}
+
 						break;
 						case "4":
 							// palette change or query
@@ -1825,6 +1859,10 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 				}
 			} else if(esc[0] == '[' && esc.length > 1) {
 				switch(esc[$-1]) {
+					case 'Z':
+						// CSI Ps Z  Cursor Backward Tabulation Ps tab stops (default = 1) (CBT).
+						// FIXME?
+					break;
 					case 'n':
 						switch(esc[$-2]) {
 							import std.string;
@@ -2332,6 +2370,9 @@ URXVT (1015)
 								/* Extensions */
 								default: unknownEscapeSequence(cast(string) esc);
 							}
+					break;
+					case 'p':
+						// it is asking a question... and tbh i don't care.
 					break;
 					case 'l':
 					//import std.stdio; writeln("l magic ", cast(string) esc);
@@ -2929,15 +2970,23 @@ mixin template ForwardVirtuals(alias writer) {
 		// this is xterm compatible, though xterm rarely implements it
 		import std.base64;
 				// idk why the cast is needed here
-		writer("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
+		writer("\033]52;c;"~Base64.encode(cast(ubyte[])text)~"\007");
 	}
 	protected override void pasteFromClipboard(void delegate(in char[]) dg) {
 		// this is a slight extension. xterm invented the string - it means request the primary selection -
 		// but it generally doesn't actually get a reply. so i'm using it to request the primary which will be
 		// sent as a pasted strong.
 		// (xterm prolly doesn't do it by default because it is potentially insecure, letting a naughty app steal your clipboard data, but meh, any X application can do that too and it is useful here for nesting.)
+		writer("\033]52;c;?\007");
+	}
+	protected override void copyToPrimary(string text) {
+		import std.base64;
+		writer("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
+	}
+	protected override void pasteFromPrimary(void delegate(in char[]) dg) {
 		writer("\033]52;p;?\007");
 	}
+
 }
 
 /// you can pass this as PtySupport's arguments when you just don't care

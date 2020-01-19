@@ -276,6 +276,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					char[4] str;
 					import std.utf;
 					auto data = str[0 .. encode(str, im.characterEvent.character)];
+					if(data == "\n") data[] = "\r";
 					sendToApplication(data);
 				break;
 				case InputMessage.Type.SizeChanged:
