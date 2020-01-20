@@ -986,7 +986,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		version(Posix) {
 			makeNonBlocking(master);
 			auto listener = new PosixFdReader(&readyToRead, master);
-			listener.onHup = () { import std.stdio; writeln("hup"); EventLoop.get.exit(); };
+			listener.onHup = () { EventLoop.get.exit(); };
 			// no edge triggering, that has a nasty habit of locking us up
 			/+
 			addListener(delegate void(FileHup hup) {
@@ -1208,6 +1208,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 						}
 					//}
 				} else if(cell.nonCharacterData !is null) {
+					//import std.stdio; writeln(cast(void*) cell.nonCharacterData);
 					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
 						flushBuffer();
 						painter.outlineColor = Color.black;

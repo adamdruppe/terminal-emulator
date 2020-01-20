@@ -642,7 +642,7 @@ class TerminalEmulator {
 
 		//pragma(msg, TerminalCell.sizeof);
 	/// represents one terminal cell
-	align(1)
+	align((void*).sizeof)
 	static struct TerminalCell {
 	align(1):
 		private union {

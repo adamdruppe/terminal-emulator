@@ -69,10 +69,21 @@ export void changeCurrentCursor(Terminal* t, TerminalEmulator.CursorStyle style)
 }
 
 export void displayImage(Terminal* t, string filename) {
+	import std.base64;
+	ubyte[] data;
+	if(filename == "-") {
+		import std.stdio;
+		foreach(chunk; stdin.byChunk(4096))
+			data ~= chunk;
+	} else {
+		import std.file;
+		data = cast(ubyte[]) std.file.read(filename);
+	}
+
+
 	t.writeStringRaw("\000");
 	t.writeStringRaw(extensionMagicIdentifier);
-	import std.base64, std.file;
-	t.writeStringRaw(Base64.encode(cast(ubyte[]) std.file.read(filename)));
+	t.writeStringRaw(Base64.encode(data));
 	t.writeStringRaw("\000");
 }
 
