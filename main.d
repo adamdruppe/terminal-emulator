@@ -1143,7 +1143,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				bufferY = posy;
 			}
 
-			{
+			if(!cell.hasNonCharacterData) {
 
 				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
 				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
@@ -1210,10 +1210,14 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				} else if(cell.nonCharacterData !is null) {
 					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
 						flushBuffer();
+						painter.outlineColor = Color.black;
+						painter.fillColor = Color.black;
+						painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
 						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
 					}
 				}
 
+				if(!cell.hasNonCharacterData)
 				if(cell.attributes.underlined) {
 					// the posx adjustment is because the buffer assumes it is going
 					// to be flushed after advancing, but here, we're doing it mid-character
