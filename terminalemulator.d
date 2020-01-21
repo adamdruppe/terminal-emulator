@@ -2440,6 +2440,10 @@ URXVT (1015)
 								case 1003:
 									allMouseTrackingOff();
 								break;
+								case 1005:
+								case 1006:
+									// idk
+								break;
 								case 1048:
 									cursorPosition = popSavedCursor;
 								break;
@@ -2509,7 +2513,8 @@ URXVT (1015)
 					case 'c':
 						// send device attributes
 						// FIXME: what am i supposed to do here?
-						sendToApplication("\033[>0;138;0c");
+						//sendToApplication("\033[>0;138;0c");
+						//sendToApplication("\033[?62;");
 					break;
 					default:
 						// [42\esc] seems to have gotten here once somehow
