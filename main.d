@@ -583,6 +583,12 @@ class NonCharacterData_Image : NonCharacterData {
 	Makes a terminal emulator out of a SimpleWindow.
 */
 class TerminalEmulatorWindow : TerminalEmulator {
+
+	override void requestExit() {
+		EventLoop.get.exit();
+	}
+
+
 	protected override BrokenUpImage handleBinaryExtensionData(const(ubyte)[] binaryData) {
 		TrueColorImage mi;
 
@@ -859,9 +865,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				return;
 			}
 
-			if(ev.key == Key.ScrollLock) {
-				toggleScrollbackWrap();
-			}
 			// end debug stuff
 
 
@@ -995,6 +998,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			});
 			+/
 		} else 
+		version(winpty) {
+			auto whr = new WindowsHandleReader(&readyToReadPty, inputEvent);
+		} else
 		version(Windows) {
 			overlapped = new OVERLAPPED();
 			overlapped.hEvent = cast(void*) this;

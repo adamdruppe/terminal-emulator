@@ -381,7 +381,8 @@ void main(string[] args) {
 		termios old;
 		ubyte[128] padding2;
 		tcgetattr(0 /* terminal.fdIn */, &old);
-		old.c_iflag &= ~(IXON | IXOFF);
+		old.c_iflag &= ~(IXON | IXOFF | ISIG);
+		old.c_cc[VQUIT] = 0; // disable the ctrl+\ signal so it can be handled on the inner layer too
 		tcsetattr(0, TCSANOW, &old);
 	}
 

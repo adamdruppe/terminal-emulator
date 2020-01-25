@@ -25,6 +25,14 @@ import std.algorithm : max;
 
 enum extensionMagicIdentifier = "ARSD Terminal Emulator binary extension data follows:";
 
+/+
+	The ;90 ones are my extensions.
+
+	90 - clipboard extensions
+	91 - image extensions
++/
+enum terminalIdCode = "\033[?64;1;2;6;9;15;16;17;18;21;22;28;90;91c";
+
 interface NonCharacterData {
 	//const(ubyte)[] serialize();
 }
@@ -117,6 +125,8 @@ class TerminalEmulator {
 
 	protected abstract void copyToPrimary(string); /// copy the given data to the PRIMARY X selection (or you can do nothing if you can't)
 	protected abstract void pasteFromPrimary(void delegate(in char[])); /// requests a paste from PRIMARY. we pass it a delegate that should accept the data
+
+	abstract protected void requestExit(); /// the program is finished and the terminal emulator is requesting you to exit
 
 	/// Signal the UI that some attention should be given, e.g. blink the taskbar or sound the bell.
 	/// The default is to ignore the demand by instantly acknowledging it - if you override this, do NOT call super().
@@ -428,13 +438,30 @@ class TerminalEmulator {
 	public bool sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
 		bool redrawRequired = false;
 
+		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.ScrollLock) {
+			toggleScrollLock();
+			return false;
+		}
+
 		// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
 		// doesn't have scrollback anyway. Thus the key will be forwarded to the application.
-		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageUp && shift) {
+		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageUp && (shift || scrollLock)) {
 			scrollback(10);
 			return true;
-		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageDown && shift) {
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageDown && (shift || scrollLock)) {
 			scrollback(-10);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.Left && (shift || scrollLock)) {
+			scrollback(0, ctrl ? -10 : -1);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.Right && (shift || scrollLock)) {
+			scrollback(0, ctrl ? 10 : 1);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.Up && (shift || scrollLock)) {
+			scrollback(ctrl ? 10 : 1);
+			return true;
+		} else if((!alternateScreenActive || scrollingBack) && key == TerminalKey.Down && (shift || scrollLock)) {
+			scrollback(ctrl ? -10 : -1);
 			return true;
 		} else if((!alternateScreenActive || scrollingBack)) { // && ev.key != Key.Shift && ev.key != Key.Shift_r) {
 			if(endScrollback())
@@ -529,6 +556,9 @@ class TerminalEmulator {
 			case Key.F12: sendToApplicationModified("\033[24~"); break;
 
 			case Key.Escape: sendToApplicationModified("\033"); break;
+
+			// my extensions
+			case Key.ScrollLock: sendToApplicationModified("\033[70~"); break;
 
 			// see terminal.d for the other side of this
 			case cast(TerminalKey) '\n': sendToApplicationModified("\033[83~"); break;
@@ -831,8 +861,23 @@ class TerminalEmulator {
 			if(readingExtensionData >= 0) {
 				if(readingExtensionData == extensionMagicIdentifier.length) {
 					if(b) {
-						if(b != 13 && b != 10)
-							extensionData ~= b;
+						switch(b) {
+							case 13, 10:
+								// ignore
+							break;
+							case 'A': .. case 'Z':
+							case 'a': .. case 'z':
+							case '0': .. case '9':
+							case '=':
+							case '+', '/':
+							case '_', '-':
+								// base64 ok
+								extensionData ~= b;
+							break;
+							default:
+								// others should abort the read
+								readingExtensionData = -1;
+						}
 					} else {
 						readingExtensionData = -1;
 						import std.base64;
@@ -942,6 +987,9 @@ class TerminalEmulator {
 
 					esc = null;
 					readingEsc = false;
+				} else if(esc.length == 1 && esc[0] == 'Z') {
+					// identify terminal
+					sendToApplication(terminalIdCode);
 				}
 				continue;
 			}
@@ -1032,7 +1080,8 @@ class TerminalEmulator {
 			currentScrollbackX += deltaX;
 			if(currentScrollbackX < 0) {
 				currentScrollbackX = 0;
-				scrollbackReflow = true;
+				if(!scrollLock)
+					scrollbackReflow = true;
 			} else
 				scrollbackReflow = false;
 		}
@@ -1092,6 +1141,12 @@ class TerminalEmulator {
 	private bool scrollbackReflow = true;
 	public void toggleScrollbackWrap() {
 		scrollbackReflow = !scrollbackReflow;
+	}
+
+	private bool scrollLock = false;
+	public void toggleScrollLock() {
+		scrollLock = !scrollLock;
+		scrollbackReflow = !scrollLock;
 	}
 
 	public void writeScrollbackToFile(string filename) {
@@ -2272,6 +2327,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								case 1049:
 									// Save cursor as in DECSC and use Alternate Screen Buffer, clearing it first.
 									alternateScreenActive = true;
+									scrollLock = false;
 									pushSavedCursor(cursorPosition);
 									cls();
 								break;
@@ -2362,6 +2418,7 @@ URXVT (1015)
 								case 1047:
 								case 47:
 									alternateScreenActive = true;
+									scrollLock = false;
 									cls();
 								break;
 								case 25:
@@ -2515,6 +2572,7 @@ URXVT (1015)
 						// FIXME: what am i supposed to do here?
 						//sendToApplication("\033[>0;138;0c");
 						//sendToApplication("\033[?62;");
+						sendToApplication(terminalIdCode);
 					break;
 					default:
 						// [42\esc] seems to have gotten here once somehow
@@ -2554,6 +2612,7 @@ enum TerminalKey : int {
 	End = 0x23,// + 0xF0000, /// .
 	PageUp = 0x21,// + 0xF0000, /// .
 	PageDown = 0x22,// + 0xF0000, /// .
+	ScrollLock = 0x91, 
 }
 
 /* These match simpledisplay.d which match terminal.d, so you can just cast them */
@@ -2691,7 +2750,9 @@ version(Posix) {
 			environment["TERM"] = "xterm"; // we're closest to an xterm, so definitely want to pretend to be one to the child processes
 			environment["TERM_EXTENSIONS"] = "arsd"; // announce our extensions
 
-			environment["LANG"] = "en_US.UTF-8"; // tell them that utf8 rox (FIXME: what about non-US?)
+			import std.string;
+			if(environment["LANG"].indexOf("UTF-8") == -1)
+				environment["LANG"] = "en_US.UTF-8"; // tell them that utf8 rox (FIXME: what about non-US?)
 
 			import core.sys.posix.unistd;
 
@@ -2720,11 +2781,11 @@ version(Windows) {
 	version(winpty) {
 		alias HPCON = HANDLE;
 		extern(Windows)
-			HRESULT ResizePseudoConsole(HPCON, COORD);
+			HRESULT function(HPCON, COORD) ResizePseudoConsole;
 		extern(Windows)
-			HRESULT CreatePseudoConsole(COORD, HANDLE, HANDLE, DWORD, HPCON*);
+			HRESULT function(COORD, HANDLE, HANDLE, DWORD, HPCON*) CreatePseudoConsole;
 		extern(Windows)
-			void ClosePseudoConsole(HPCON);
+			void function(HPCON) ClosePseudoConsole;
 	}
 
 	extern(Windows)
@@ -2755,6 +2816,19 @@ version(Windows) {
 	);
 	extern(Windows)
 	BOOL UnregisterWait(HANDLE);
+
+	struct STARTUPINFOEXA {
+		STARTUPINFOA StartupInfo;
+		void* lpAttributeList;
+	}
+
+	enum PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
+	enum EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+
+	extern(Windows)
+	BOOL InitializeProcThreadAttributeList(void*, DWORD, DWORD, PSIZE_T);
+	extern(Windows)
+	BOOL UpdateProcThreadAttribute(void*, DWORD, DWORD_PTR, PVOID, SIZE_T, PVOID, PSIZE_T);
 
 	__gshared HANDLE waitHandle;
 	__gshared bool childDead;
@@ -2865,32 +2939,71 @@ version(Windows) {
 			throw new Exception("SetHandleInformation");
 		HANDLE outreadPipe;
 		HANDLE outwritePipe;
-		if(MyCreatePipeEx(&outreadPipe, &outwritePipe, &saAttr, 0, FILE_FLAG_OVERLAPPED, 0) == 0)
+
+		version(winpty)
+			auto flags = 0;
+		else
+			auto flags = FILE_FLAG_OVERLAPPED;
+
+		if(MyCreatePipeEx(&outreadPipe, &outwritePipe, &saAttr, 0, flags, 0) == 0)
 			throw new Exception("CreatePipe");
 		if(!SetHandleInformation(outreadPipe, 1/*HANDLE_FLAG_INHERIT*/, 0))
 			throw new Exception("SetHandleInformation");
 
 		version(winpty) {
+
+			auto lib = LoadLibrary("kernel32.dll");
+			if(lib is null) throw new Exception("holy wtf batman");
+			scope(exit) FreeLibrary(lib);
+
+			CreatePseudoConsole = cast(typeof(CreatePseudoConsole)) GetProcAddress(lib, "CreatePseudoConsole");
+			ClosePseudoConsole = cast(typeof(ClosePseudoConsole)) GetProcAddress(lib, "ClosePseudoConsole");
+			ResizePseudoConsole = cast(typeof(ResizePseudoConsole)) GetProcAddress(lib, "ResizePseudoConsole");
+
+			if(CreatePseudoConsole is null || ClosePseudoConsole is null || ResizePseudoConsole is null)
+				throw new Exception("Windows pseudo console not available on this version");
+
+			initPipeHack(outreadPipe);
+
 			HPCON hpc;
 			auto result = CreatePseudoConsole(
-				size,
-				inwritePipe,
-				outreadPipe,
+				COORD(80, 24),
+				inreadPipe,
+				outwritePipe,
 				0, // flags
 				&hpc
 			);
+
+			assert(result == S_OK);
 
 			scope(exit)
 				ClosePseudoConsole(hpc);
 		}
 
-		STARTUPINFOA startupInfo;
-		startupInfo.cb = startupInfo.sizeof;
+		STARTUPINFOEXA siex;
+		siex.StartupInfo.cb = siex.sizeof;
 
-		startupInfo.dwFlags = STARTF_USESTDHANDLES;
-		startupInfo.hStdInput = inreadPipe;
-		startupInfo.hStdOutput = outwritePipe;
-		startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);//outwritePipe;
+		version(winpty) {
+			size_t size;
+			InitializeProcThreadAttributeList(null, 1, 0, &size);
+			ubyte[] wtf = new ubyte[](size);
+			siex.lpAttributeList = wtf.ptr;
+			InitializeProcThreadAttributeList(siex.lpAttributeList, 1, 0, &size);
+			UpdateProcThreadAttribute(
+				siex.lpAttributeList,
+				0,
+				PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+				hpc,
+				hpc.sizeof,
+				null,
+				null
+			);
+		} {//else {
+			siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+			siex.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);//inreadPipe;
+			siex.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);//outwritePipe;
+			siex.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);//outwritePipe;
+		}
 
 		PROCESS_INFORMATION pi;
 		import std.conv;
@@ -2901,7 +3014,7 @@ version(Windows) {
 		cmdLine[0 .. commandLine.length] = commandLine[];
 		cmdLine[commandLine.length] = 0;
 		import std.string;
-		if(CreateProcessA(program is null ? null : toStringz(program), cmdLine.ptr, null, null, true, 0/*0x08000000 /* CREATE_NO_WINDOW */, null /* environment */, null, &startupInfo, &pi) == 0)
+		if(CreateProcessA(program is null ? null : toStringz(program), cmdLine.ptr, null, null, true, EXTENDED_STARTUPINFO_PRESENT /*0x08000000 /* CREATE_NO_WINDOW */, null /* environment */, null, cast(STARTUPINFOA*) &siex, &pi) == 0)
 			throw new Exception("CreateProcess " ~ to!string(GetLastError()));
 
 		if(RegisterWaitForSingleObject(&waitHandle, pi.hProcess, &childCallback, cast(void*) GetCurrentThreadId(), INFINITE, 4 /* WT_EXECUTEINWAITTHREAD */ | 8 /* WT_EXECUTEONLYONCE */) == 0)
@@ -2996,6 +3109,50 @@ mixin template ForwardVirtuals(alias writer) {
 
 /// you can pass this as PtySupport's arguments when you just don't care
 final void doNothing() {}
+
+version(winpty) {
+		__gshared static HANDLE inputEvent;
+		__gshared static HANDLE magicEvent;
+		__gshared static ubyte[] helperBuffer;
+		__gshared static HANDLE helperThread;
+
+		static void initPipeHack(void* ptr) {
+			inputEvent = CreateEvent(null, false, false, null);
+			assert(inputEvent !is null);
+			magicEvent = CreateEvent(null, false, true, null);
+			assert(magicEvent !is null);
+
+			helperThread = CreateThread(
+				null,
+				0,
+				&actuallyRead,
+				ptr,
+				0,
+				null
+			);
+
+			assert(helperThread !is null);
+		}
+
+		extern(Windows) static
+		uint actuallyRead(void* ptr) {
+			ubyte[4096] buffer;
+			DWORD got;
+			while(true) {
+				// wait for the other thread to tell us they
+				// are done...
+				WaitForSingleObject(magicEvent, INFINITE);
+				auto ret = ReadFile(ptr, buffer.ptr, cast(DWORD) buffer.length, &got, null);
+				helperBuffer = buffer[0 .. got];
+				// tells the other thread it is allowed to read
+				// readyToReadPty
+				SetEvent(inputEvent);
+			}
+			return 0;
+		}
+
+
+}
 
 /// You must implement a function called redraw() and initialize the members in your constructor
 mixin template PtySupport(alias resizeHelper) {
@@ -3100,8 +3257,8 @@ mixin template PtySupport(alias resizeHelper) {
 		} else version(Windows) {
 			version(winpty) {
 				COORD coord;
-				coord.x = cast(ushort) w;
-				coord.y = cast(ushort) y;
+				coord.X = cast(ushort) w;
+				coord.Y = cast(ushort) h;
 				ResizePseudoConsole(hpc, coord);
 			} else {
 				sendToApplication([cast(ubyte) 254, cast(ubyte) w, cast(ubyte) h]);
@@ -3184,6 +3341,13 @@ mixin template PtySupport(alias resizeHelper) {
 			}
 			return 0;
 		}
+	} else version(winpty) {
+		void readyToReadPty() {
+			super.sendRawInput(helperBuffer);
+			SetEvent(magicEvent); // tell the other thread we have finished
+			redraw_();
+			justRead();
+		}
 	} else version(Windows) {
 		OVERLAPPED* overlapped;
 		bool overlappedBufferLocked;
@@ -3243,6 +3407,7 @@ mixin template PtySupport(alias resizeHelper) {
 
 				if(len == 0) {
 					close(fd);
+					requestExit();
 					break;
 				}
 

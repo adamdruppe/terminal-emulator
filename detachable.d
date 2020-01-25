@@ -205,6 +205,10 @@ class DetachableTerminalEmulator : TerminalEmulator {
 
 	mixin ForwardVirtuals!(writer);
 
+	override void requestExit() {
+		// need something?!?
+	}
+
 	Socket listeningSocket;
 	int socket = -1;
 	void acceptConnection() {
