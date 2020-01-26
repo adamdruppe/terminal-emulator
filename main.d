@@ -2,6 +2,18 @@
 
 // FIXME: use_libssh2 should do keepalive.
 
+// FIXME: ctrl+space is supposed to send \0.
+// but otherwise they just -0x40
+
+// some things do alt+thing as just being ESC followed by thing...
+
+/+
+	winpty notes:
+
+	* it doesn't translate the cursor size commands from windows to esc.
+	* it should be tested carefully.
++/
+
 /**
 	This is the graphical application for the terminal emulator.
 

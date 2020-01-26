@@ -561,7 +561,7 @@ void main(string[] args) {
 						case OutputMessageType.NULL:
 							// should never happen
 							assert(0);
-						break;
+						//break;
 						case OutputMessageType.dataFromTerminal:
 							handleDataFromTerminal();
 						break;
@@ -571,7 +571,7 @@ void main(string[] args) {
 							// but the idea is if one is remote detached, they all are,
 							// so we should just terminate immediately as to not write a new file
 							return;
-						break;
+						//break;
 						case OutputMessageType.mouseTrackingOn:
 							session.mouseTrackingOn = true;
 						break;

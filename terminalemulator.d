@@ -50,8 +50,11 @@ struct CustomGlyph {
 
 void unknownEscapeSequence(in char[] esc) {
 	import std.file;
-	version(Posix)
-	debug append("/tmp/arsd-te-bad-esc-sequences.txt", esc ~ "\n");
+	version(Posix) {
+		debug append("/tmp/arsd-te-bad-esc-sequences.txt", esc ~ "\n");
+	} else {
+		debug append("arsd-te-bad-esc-sequences.txt", esc ~ "\n");
+	}
 }
 
 // This is used for the double-click word selection
@@ -2270,6 +2273,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// default should be full size of window
 							auto args = getArgs(1, screenHeight);
 
+							// FIXME: these are supposed to be per-buffer
 							scrollZoneTop = args[0] - 1;
 							scrollZoneBottom = args[1] - 1;
 						} else {

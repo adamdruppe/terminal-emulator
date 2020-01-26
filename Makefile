@@ -1,10 +1,25 @@
+# This makefile is designed for use on my computer. You will probably have to adapt the paths for your computer.
+#
+# just use make -B target instead of thinking about deps....
+
+ARSD=/home/me/arsd
+
 all:
-	#dmd main.d terminalemulator.d -L-lutil /home/me/arsd/simpledisplay.d /home/me/arsd/color.d /home/me/arsd/jsvar.d /home/me/arsd/script.d /home/me/arsd/minigui.d -debug -g /home/me/arsd/ttf.d -J/home/me/arsd /home/me/arsd/png.d /home/me/arsd/bmp.d -m64 # -version=use_libssh2 ~/arsd/libssh2.d -ofsshmain
-	#dmdw main.d /home/me/arsd/simpledisplay.d /home/me/arsd/color.d -debug /home/me/arsd/ttf.d terminalemulator.d -J/home/me/arsd /home/me/arsd/png.d /home/me/arsd/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 -version=use_libssh2 /home/me/arsd/libssh2.d /home/me/arsd/libssh2.lib /home/me/arsd/minigui.d /home/me/arsd/jsvar.d /home/me/arsd/script.d
-	dmdw -ofwinpty.exe main.d /home/me/arsd/simpledisplay.d /home/me/arsd/color.d -debug /home/me/arsd/ttf.d terminalemulator.d -J/home/me/arsd /home/me/arsd/png.d /home/me/arsd/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 /home/me/arsd/minigui.d /home/me/arsd/jsvar.d /home/me/arsd/script.d -version=winpty -g
-	#dmd -m64 attach message.d ~/arsd/terminal detachable.d terminalemulator.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop -debug -g utility.d ~/arsd/png.d -version=arsd_te_conservative_draws
-	#dmd utility ~/arsd/terminal terminalemulator ~/arsd/color -version=terminalextensions_commandline ~/arsd/png.d
-	#dmd nestedterminalemulator.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop
-	#dmdw nestedterminalemulator.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/simpledisplay.d # -version=use_libssh2 /home/me/arsd/libssh2.d /home/me/arsd/libssh2.lib
-	#dmd -m64 detachable.d terminalemulator.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop message.d ~/arsd/terminal.d -version=standalone_detachable -debug -g # this separate detachable is for debugging, this is also available in attach so the separate thing isn't strictly needed
+
+main:
+	dmd main.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
+main.exe:
+	dmdw main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 -version=use_libssh2 $(ARSD)/libssh2.d $(ARSD)/libssh2.lib $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d
+winpty.exe:
+	dmdw -ofwinpty.exe main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d -version=winpty -g
+attach:
+	dmd -m64 attach message.d $(ARSD)/terminal detachable.d terminalemulator.d $(ARSD)/color.d $(ARSD)/eventloop.d -version=with_eventloop -debug -g utility.d $(ARSD)/png.d -version=arsd_te_conservative_draws
+detachable:
+	dmd -m64 detachable.d terminalemulator.d $(ARSD)/color.d $(ARSD)/eventloop.d -version=with_eventloop message.d $(ARSD)/terminal.d -version=standalone_detachable -debug -g # this separate detachable is for debugging, this is also available in attach so the separate thing isn't strictly needed
+utility:
+	dmd utility $(ARSD)/terminal terminalemulator $(ARSD)/color -version=terminalextensions_commandline $(ARSD)/png.d
+nestedterminalemulator:
+	dmd nestedterminalemulator.d terminalemulator.d $(ARSD)/terminal.d $(ARSD)/color.d $(ARSD)/eventloop.d -version=with_eventloop
+nestedterminalemulator.exe:
+	dmdw nestedterminalemulator.d terminalemulator.d $(ARSD)/terminal.d $(ARSD)/color.d $(ARSD)/simpledisplay.d # -version=use_libssh2 $(ARSD)/libssh2.d $(ARSD)/libssh2.lib
 
