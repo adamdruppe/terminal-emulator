@@ -3152,7 +3152,7 @@ version(winpty) {
 				// readyToReadPty
 				SetEvent(inputEvent);
 			}
-			return 0;
+			assert(0);
 		}
 
 
