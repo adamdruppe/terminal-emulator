@@ -275,7 +275,16 @@ void main(string[] args) {
 		}
 	}
 
+	int size;
+	string[] cmdArgs;
+
 	version(winpty) {
+		if(args.length < 2) {
+			size = 0;
+			cmdArgs = ["cmd.exe"];
+		} else {
+			cmdArgs = args[2 .. $];
+		}
 
 	} else {
 		if(args.length < 2) {
@@ -286,7 +295,7 @@ void main(string[] args) {
 	}
 
 	import std.string;
-	startChild!startup(null, args[2..$].join(" "));
+	startChild!startup(null, cmdArgs.join(" "));
 }
 else version(Posix)
 void main(string[] args) {
