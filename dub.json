@@ -1,0 +1,88 @@
+{
+	"name": "adr-terminalemulator",
+	"description": "Adam D. Ruppe's terminal emulation suite. Alternatives to xterm, gnu screen, putty, etc.",
+	"authors": ["Adam D. Ruppe"],
+	"license": "AGPL-3.0 or proprietary",
+	"configurations": [
+		{
+			"name": "main",
+			"description": "The main terminal emulator GUI",
+			"targetType": "executable",
+			"importPaths": ["."],
+			"stringImportPaths": ["font"],
+			"libs-posix": ["util"],
+			"versions-windows": ["winpty"],
+			"sourceFiles": ["terminalemulator.d", "main.d"],
+			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
+			"dependencies": {
+				"arsd-official:simpledisplay":"*",
+				"arsd-official:jsvar":"*",
+				"arsd-official:script":"*",
+				"arsd-official:minigui":"*",
+				"arsd-official:ttf":"*",
+				"arsd-official:png":"*",
+				"arsd-official:bmp":"*"
+			}
+		},
+		{
+			"name": "attach",
+			"description": "Detachable terminal emulator, like gnu screen, tmux, etc.",
+			"targetType": "executable",
+			"importPaths": ["."],
+			"libs-posix": ["util"],
+			"versions": ["arsd_te_conservative_draws"],
+			"sourceFiles": ["attach.d", "message.d", "detachable.d", "terminalemulator.d", "utility.d"],
+			"dependencies": {
+				"arsd-official:png":"*",
+				"arsd-official:terminal":"*",
+				"arsd-official:eventloop":"*"
+			}
+		},
+		{
+			"name": "ssh-gui",
+			"description": "The main terminal emulator GUI with a ssh backend",
+			"targetType": "executable",
+			"importPaths": ["."],
+			"stringImportPaths": ["font"],
+			"libs-posix": ["util"],
+			"versions": ["use_libssh2"],
+			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
+			"sourceFiles": ["terminalemulator.d", "main.d"],
+			"dependencies": {
+				"arsd-official:simpledisplay":"*",
+				"arsd-official:jsvar":"*",
+				"arsd-official:script":"*",
+				"arsd-official:minigui":"*",
+				"arsd-official:ttf":"*",
+				"arsd-official:png":"*",
+				"arsd-official:libssh2_bindings":"*",
+				"arsd-official:bmp":"*"
+			}
+		},
+		{
+			"name": "utility",
+			"description": "Utility for using my extensions",
+			"targetType": "executable",
+			"importPaths": ["."],
+			"versions": ["terminalextensions_commandline"],
+			"sourceFiles": ["utility.d", "terminalemulator.d"],
+			"dependencies": {
+				"arsd-official:terminal":"*",
+				"arsd-official:color_base":"*",
+				"arsd-official:png":"*"
+			}
+		},
+		{
+			"name": "core",
+			"description": "The terminal emulation core as a library",
+			"targetType": "library",
+			"importPaths": ["."],
+			"libs-posix": ["util"],
+			"sourceFiles": ["terminalemulator.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			}
+		}
+
+	]
+}
