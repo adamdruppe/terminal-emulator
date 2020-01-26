@@ -15,13 +15,13 @@
 			"sourceFiles": ["terminalemulator.d", "main.d"],
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"dependencies": {
-				"arsd-official:simpledisplay":"*",
-				"arsd-official:jsvar":"*",
-				"arsd-official:script":"*",
-				"arsd-official:minigui":"*",
-				"arsd-official:ttf":"*",
-				"arsd-official:png":"*",
-				"arsd-official:bmp":"*"
+				"arsd-official:simpledisplay":">=5.1.0",
+				"arsd-official:jsvar":">=5.1.0",
+				"arsd-official:script":">=5.1.0",
+				"arsd-official:minigui":">=5.1.0",
+				"arsd-official:ttf":">=5.1.0",
+				"arsd-official:png":">=5.1.0",
+				"arsd-official:bmp":">=5.1.0"
 			}
 		},
 		{
@@ -33,9 +33,9 @@
 			"versions": ["arsd_te_conservative_draws"],
 			"sourceFiles": ["attach.d", "message.d", "detachable.d", "terminalemulator.d", "utility.d"],
 			"dependencies": {
-				"arsd-official:png":"*",
-				"arsd-official:terminal":"*",
-				"arsd-official:eventloop":"*"
+				"arsd-official:png":">=5.1.0",
+				"arsd-official:terminal":">=5.1.0",
+				"arsd-official:eventloop":">=5.1.0"
 			}
 		},
 		{
@@ -49,14 +49,14 @@
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"sourceFiles": ["terminalemulator.d", "main.d"],
 			"dependencies": {
-				"arsd-official:simpledisplay":"*",
-				"arsd-official:jsvar":"*",
-				"arsd-official:script":"*",
-				"arsd-official:minigui":"*",
-				"arsd-official:ttf":"*",
-				"arsd-official:png":"*",
-				"arsd-official:libssh2_bindings":"*",
-				"arsd-official:bmp":"*"
+				"arsd-official:simpledisplay":">=5.1.0",
+				"arsd-official:jsvar":">=5.1.0",
+				"arsd-official:script":">=5.1.0",
+				"arsd-official:minigui":">=5.1.0",
+				"arsd-official:ttf":">=5.1.0",
+				"arsd-official:png":">=5.1.0",
+				"arsd-official:libssh2_bindings":">=5.1.0",
+				"arsd-official:bmp":">=5.1.0"
 			}
 		},
 		{
@@ -67,9 +67,9 @@
 			"versions": ["terminalextensions_commandline"],
 			"sourceFiles": ["utility.d", "terminalemulator.d"],
 			"dependencies": {
-				"arsd-official:terminal":"*",
-				"arsd-official:color_base":"*",
-				"arsd-official:png":"*"
+				"arsd-official:terminal":">=5.1.0",
+				"arsd-official:color_base":">=5.1.0",
+				"arsd-official:png":">=5.1.0"
 			}
 		},
 		{
@@ -80,7 +80,7 @@
 			"libs-posix": ["util"],
 			"sourceFiles": ["terminalemulator.d"],
 			"dependencies": {
-				"arsd-official:color_base":"*"
+				"arsd-official:color_base":">=5.1.0"
 			}
 		}
 
