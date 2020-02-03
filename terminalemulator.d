@@ -5,7 +5,10 @@
 	FIXME: make shift+enter send something special to the application
 		and shift+space, etc.
 		identify itself somehow too for client extensions
+		ctrl+space is supposed to send char 0.
 
+	FIXME: scroll stuff should be higher level  in the implementation.
+	so like scroll Rect, DirectionAndAmount
 
 	There should be a redraw thing that is given batches of instructions
 	in here that the other thing just implements.
@@ -1502,12 +1505,36 @@ class TerminalEmulator {
 		}
 
 		TerminalCell[] currentScrollbackLine;
+		ubyte[6] utf8SequenceBuffer;
+		int utf8SequenceBufferPosition;
 		int scrollbackWrappingAt = 0;
 		dchar utf8Sequence;
 		int utf8BytesRemaining;
 		int currentUtf8Shift;
 		bool newLineOnNext;
 		void addOutput(ubyte b) {
+
+			void addChar(dchar c) {
+				if(newLineOnNext) {
+					newLineOnNext = false;
+					// only if we're still on the right side...
+					if(cursorX == screenWidth - 1)
+						newLine(false);
+				}
+				TerminalCell tc;
+
+				if(characterSet !is null) {
+					if(auto replacement = utf8Sequence in *characterSet)
+						utf8Sequence = *replacement;
+				}
+				tc.ch = utf8Sequence;
+				tc.attributes = currentAttributes;
+				tc.invalidated = true;
+
+				addOutput(tc);
+			}
+
+
 			// this takes in bytes at a time, but since the input encoding is assumed to be UTF-8, we need to gather the bytes
 			if(utf8BytesRemaining == 0) {
 				// we're at the beginning of a sequence
@@ -1517,7 +1544,7 @@ class TerminalEmulator {
 					// one byte thing, do nothing more...
 				} else {
 					// the number of bytes in the sequence is the number of set bits in the first byte...
-					uint shifted =0;
+					uint shifted = 0;
 					bool there = false;
 					ubyte checkingBit = 7;
 					while(checkingBit) {
@@ -1534,21 +1561,32 @@ class TerminalEmulator {
 
 					shifted <<= (currentUtf8Shift + checkingBit);
 					utf8Sequence = cast(dchar) shifted;
+
+					utf8SequenceBufferPosition = 0;
+					utf8SequenceBuffer[utf8SequenceBufferPosition++] = b;
 				}
 			} else {
 				// add this to the byte we're doing right now...
 				utf8BytesRemaining--;
 				currentUtf8Shift -= 6;
-				if(!(b & 0b11000000) == 0b10000000) {
+				if((b & 0b11000000) != 0b10000000) {
 					// invalid utf-8 sequence,
 					// discard it and try to continue
 					utf8BytesRemaining = 0;
+					utf8Sequence = 0xfffd;
+					foreach(i; 0 .. utf8SequenceBufferPosition)
+						addChar(utf8Sequence); // put out replacement char for everything in there so far
+					utf8SequenceBufferPosition = 0;
+					addOutput(b); // retry sending this byte as a new sequence after abandoning the old crap
 					return;
 				}
 				uint shifted = b;
 				shifted &= 0b00111111;
 				shifted <<= currentUtf8Shift;
 				utf8Sequence |= shifted;
+
+				if(utf8SequenceBufferPosition < utf8SequenceBuffer.length)
+					utf8SequenceBuffer[utf8SequenceBufferPosition++] = b;
 			}
 
 			if(utf8BytesRemaining)
@@ -1569,23 +1607,7 @@ class TerminalEmulator {
 				newLine(true);
 				cursorX = cx;
 			} else {
-				if(newLineOnNext) {
-					newLineOnNext = false;
-					// only if we're still on the right side...
-					if(cursorX == screenWidth - 1)
-						newLine(false);
-				}
-				TerminalCell tc;
-
-				if(characterSet !is null) {
-					if(auto replacement = utf8Sequence in *characterSet)
-						utf8Sequence = *replacement;
-				}
-				tc.ch = utf8Sequence;
-				tc.attributes = currentAttributes;
-				tc.invalidated = true;
-
-				addOutput(tc);
+				addChar(utf8Sequence);
 			}
 		}
 
@@ -3678,3 +3700,9 @@ shared static this() {
 		'x' : '\u2502',
 	];
 }
+
+/+
+Copyright: Adam D. Ruppe, 2013 - 2020
+License:   [http://www.boost.org/LICENSE_1_0.txt|Boost Software License 1.0]
+Authors: Adam D. Ruppe
++/

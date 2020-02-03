@@ -8,6 +8,8 @@ all:
 
 main:
 	dmd main.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
+mactabs:
+	dmd mactabs.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
 main.exe:
 	dmdw main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 -version=use_libssh2 $(ARSD)/libssh2.d $(ARSD)/libssh2.lib $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d
 winpty.exe:

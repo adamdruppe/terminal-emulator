@@ -1,4 +1,6 @@
-Unless otherwise noted, the files in here are under the Boost license.
+Unless otherwise noted, the files in here are under the AGPL license, version 3 or later.
+
+The key exception is the terminalemulator.d core library file itself, which is Boost licensed:
 
 http://www.boost.org/LICENSE_1_0.txt
 

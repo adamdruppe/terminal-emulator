@@ -25,6 +25,23 @@
 			}
 		},
 		{
+			"name": "mactabs",
+			"description": "A special tabbed version for my broken screen old macbook",
+			"targetType": "executable",
+			"importPaths": ["."],
+			"libs-posix": ["util"],
+			"sourceFiles": ["terminalemulator.d", "mactabs.d"],
+			"dependencies": {
+				"arsd-official:simpledisplay":">=5.2.0",
+				"arsd-official:jsvar":">=5.2.0",
+				"arsd-official:script":">=5.2.0",
+				"arsd-official:minigui":">=5.2.0",
+				"arsd-official:ttf":">=5.2.0",
+				"arsd-official:png":">=5.2.0",
+				"arsd-official:bmp":">=5.2.0"
+			}
+		},
+		{
 			"name": "attach",
 			"description": "Detachable terminal emulator, like gnu screen, tmux, etc.",
 			"targetType": "executable",
