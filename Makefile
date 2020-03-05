@@ -7,7 +7,7 @@ ARSD=/home/me/arsd
 all:
 
 main:
-	dmd main.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
+	dmd main.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 -version=without_opengl # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
 mactabs:
 	dmd mactabs.d terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
 main.exe:

@@ -399,16 +399,25 @@ class TerminalEmulator {
 					return true;
 				}
 				if(button == MouseButton.right) {
-					auto oldSelectionEnd = selectionEnd;
-					selectionEnd = termY * screenWidth + termX;
 
-					if(selectionEnd < oldSelectionEnd) {
-						auto tmp = selectionEnd;
-						selectionEnd = oldSelectionEnd;
-						oldSelectionEnd = tmp;
+					int changed1;
+					int changed2;
+
+					auto click = termY * screenWidth + termX;
+					if(click < selectionStart) {
+						auto oldSelectionStart = selectionStart;
+						selectionStart = click;
+						changed1 = selectionStart;
+						changed2 = oldSelectionStart;
+					} else if(click > selectionEnd) {
+						auto oldSelectionEnd = selectionEnd;
+						selectionEnd = click;
+
+						changed1 = oldSelectionEnd;
+						changed2 = selectionEnd;
 					}
 
-					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[oldSelectionEnd .. selectionEnd]) {
+					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[changed1 .. changed2]) {
 						cell.invalidated = true;
 						cell.selected = true;
 					}
@@ -775,6 +784,8 @@ class TerminalEmulator {
 		int firstSpace = -1;
 		string ret;
 		foreach(cell; (*buffer)[offsetStart .. offsetEnd]) {
+			if(cell.hasNonCharacterData)
+				break;
 			ret ~= cell.ch;
 
 			x++;
