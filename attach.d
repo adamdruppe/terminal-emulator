@@ -367,6 +367,7 @@ void main(string[] args) {
 
 	// doing these just to get it in the state i want
 	auto terminal = Terminal(ConsoleOutputType.cellular);
+	scope(exit) terminal.cursor(TerminalCursor.DEFAULT, ForceOption.alwaysSend);
 	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
 	try {
 

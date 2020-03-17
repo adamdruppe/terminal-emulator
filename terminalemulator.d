@@ -65,6 +65,26 @@ bool isWordSeparator(dchar ch) {
 	return ch == ' ' || ch == '"' || ch == '<' || ch == '>' || ch == '(' || ch == ')' || ch == ',';
 }
 
+TerminalEmulator.TerminalCell[] sliceTrailingWhitespace(TerminalEmulator.TerminalCell[] t) {
+	size_t end = t.length;
+	while(end >= 1) {
+		if(t[end-1].hasNonCharacterData || t[end-1].ch != ' ')
+			break;
+		end--;
+	}
+
+	t = t[0 .. end];
+
+	/*
+	import std.stdio;
+	foreach(ch; t)
+		write(ch.ch);
+	writeln("*");
+	*/
+
+	return t;
+}
+
 struct ScopeBuffer(T, size_t maxSize) {
 	T[maxSize] buffer;
 	size_t length;
@@ -630,13 +650,6 @@ class TerminalEmulator {
 				ta.background = Color.white;
 			}
 		}
-		if(environment.get("ELVISBG") == "dark") {
-			defaultForeground = Color.white;
-			defaultBackground = Color.black;
-		} else {
-			defaultForeground = Color.black;
-			defaultBackground = Color.white;
-		}
 
 		return ta;
 	}
@@ -1022,6 +1035,7 @@ class TerminalEmulator {
 
 			if(b == 13) {
 				cursorX = 0;
+				setTentativeScrollback(0);
 				continue;
 			}
 
@@ -1032,6 +1046,7 @@ class TerminalEmulator {
 
 			if(b == 8) {
 				cursorX = cursorX - 1;
+				setTentativeScrollback(cursorX);
 				continue;
 			}
 
@@ -1040,8 +1055,10 @@ class TerminalEmulator {
 				// so apparently it is just supposed to move the cursor.
 				// it breaks mutt to output spaces
 				cursorX = cursorX + howMany;
-				//foreach(i; 0 .. howMany)
-					//addOutput(' '); // FIXME: it would be nice to actually put a tab character there for copy/paste accuracy (ditto with newlines actually)
+
+				if(!alternateScreenActive)
+					foreach(i; 0 .. howMany)
+						addScrollbackOutput(' '); // FIXME: it would be nice to actually put a tab character there for copy/paste accuracy (ditto with newlines actually)
 				continue;
 			}
 
@@ -1054,6 +1071,16 @@ class TerminalEmulator {
 	/// construct
 	this(int width, int height) {
 		// initialization
+
+		import std.process;
+		if(environment.get("ELVISBG") == "dark") {
+			defaultForeground = Color.white;
+			defaultBackground = Color.black;
+		} else {
+			defaultForeground = Color.black;
+			defaultBackground = Color.white;
+		}
+
 		currentAttributes = defaultTextAttributes();
 		cursorColor = Color.white;
 
@@ -1518,7 +1545,7 @@ class TerminalEmulator {
 		TerminalCell[] currentScrollbackLine;
 		ubyte[6] utf8SequenceBuffer;
 		int utf8SequenceBufferPosition;
-		int scrollbackWrappingAt = 0;
+		// int scrollbackWrappingAt = 0;
 		dchar utf8Sequence;
 		int utf8BytesRemaining;
 		int currentUtf8Shift;
@@ -1628,13 +1655,13 @@ class TerminalEmulator {
 				// I am limiting this because obscenely long lines are kinda useless anyway and
 				// i don't want it to eat excessive memory when i spam some thing accidentally
 				if(currentScrollbackLine.length < 1024)
-					scrollbackBuffer ~= currentScrollbackLine;
+					scrollbackBuffer ~= currentScrollbackLine.sliceTrailingWhitespace;
 				else
-					scrollbackBuffer ~= currentScrollbackLine[0 .. 1024];
+					scrollbackBuffer ~= currentScrollbackLine[0 .. 1024].sliceTrailingWhitespace;
 
 				currentScrollbackLine = null;
 				currentScrollbackLine.reserve(64);
-				scrollbackWrappingAt = 0;
+				// scrollbackWrappingAt = 0;
 			}
 
 			cursorX = 0;
@@ -1715,6 +1742,41 @@ class TerminalEmulator {
 			selectionEnd = 0;
 		}
 
+		private int tentativeScrollback = int.max;
+		private void setTentativeScrollback(int a) {
+			tentativeScrollback = a;
+		}
+
+		void addScrollbackOutput(dchar ch) {
+			TerminalCell plain;
+			plain.ch = ch;
+			plain.attributes = currentAttributes;
+			addScrollbackOutput(plain);
+		}
+
+		void addScrollbackOutput(TerminalCell tc) {
+			if(tentativeScrollback != int.max) {
+				if(tentativeScrollback >= 0 && tentativeScrollback < currentScrollbackLine.length) {
+					currentScrollbackLine = currentScrollbackLine[0 .. tentativeScrollback];
+					currentScrollbackLine.assumeSafeAppend();
+				}
+				tentativeScrollback = int.max;
+			}
+
+			/*
+			TerminalCell plain;
+			plain.ch = ' ';
+			plain.attributes = currentAttributes;
+			int lol = cursorX + scrollbackWrappingAt;
+			while(lol >= currentScrollbackLine.length)
+				currentScrollbackLine ~= plain;
+			currentScrollbackLine[lol] = tc;
+			*/
+
+			currentScrollbackLine ~= tc;
+
+		}
+
 		void addOutput(TerminalCell tc) {
 			if(alternateScreenActive) {
 				if(alternateScreen[cursorY * screenWidth + cursorX].selected) {
@@ -1729,13 +1791,7 @@ class TerminalEmulator {
 				// then it need not be invalidated. Same with above for the alt screen
 				normalScreen[cursorY * screenWidth + cursorX] = tc;
 
-				TerminalCell plain;
-				plain.ch = ' ';
-				plain.attributes = currentAttributes;
-				int lol = cursorX + scrollbackWrappingAt;
-				while(lol >= currentScrollbackLine.length)
-					currentScrollbackLine ~= plain;
-				currentScrollbackLine[lol] = tc;
+				addScrollbackOutput(tc);
 			}
 			// FIXME: the wraparoundMode seems to help gnu screen but then it doesn't go away properly and that messes up bash...
 			//if(wraparoundMode && cursorX == screenWidth - 1) {
@@ -1745,7 +1801,8 @@ class TerminalEmulator {
 
 				//if(!alternateScreenActive || cursorY < screenHeight - 1)
 					//newLine(false);
-				scrollbackWrappingAt = cast(int) currentScrollbackLine.length;
+
+				// scrollbackWrappingAt = cast(int) currentScrollbackLine.length;
 			} else
 				cursorX = cursorX + 1;
 
@@ -1966,7 +2023,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 					break;
 					case 'A': if(cursorY) cursorY = cursorY - getArgs(1)[0]; break;
 					case 'B': if(cursorY != this.screenHeight - 1) cursorY = cursorY + getArgs(1)[0]; break;
-					case 'D': if(cursorX) cursorX = cursorX - getArgs(1)[0]; break;
+					case 'D': if(cursorX) cursorX = cursorX - getArgs(1)[0]; setTentativeScrollback(cursorX); break;
 					case 'C': if(cursorX != this.screenWidth - 1) cursorX = cursorX + getArgs(1)[0]; break;
 
 					case 'd': cursorY = getArgs(1)[0]-1; break;
@@ -1977,6 +2034,12 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 					case 'H':
 						auto got = getArgs(1, 1);
 						cursorX = got[1] - 1;
+
+						if(got[0] - 1 == cursorY)
+							setTentativeScrollback(cursorX);
+						else
+							setTentativeScrollback(0);
+
 						cursorY = got[0] - 1;
 						newLineOnNext = false;
 					break;
@@ -3475,6 +3538,369 @@ mixin template PtySupport(alias resizeHelper) {
 
 			justRead();
 		}
+	}
+}
+
+mixin template SdpyImageSupport() {
+	class NonCharacterData_Image : NonCharacterData {
+		Image data;
+		int imageOffsetX;
+		int imageOffsetY;
+
+		this(Image data, int x, int y) {
+			this.data = data;
+			this.imageOffsetX = x;
+			this.imageOffsetY = y;
+		}
+	}
+
+	protected override BrokenUpImage handleBinaryExtensionData(const(ubyte)[] binaryData) {
+		TrueColorImage mi;
+
+		if(binaryData.length > 8 && binaryData[1] == 'P' && binaryData[2] == 'N' && binaryData[3] == 'G') {
+			import arsd.png;
+			mi = imageFromPng(readPng(binaryData)).getAsTrueColorImage();
+		} else if(binaryData.length > 8 && binaryData[0] == 'B' && binaryData[1] == 'M') {
+			import arsd.bmp;
+			mi = readBmp(binaryData).getAsTrueColorImage();
+
+			// FIXME: let's add svg and jpg
+		} else {
+			return BrokenUpImage();
+		}
+
+		BrokenUpImage bi;
+		bi.width = mi.width / fontWidth + ((mi.width%fontWidth) ? 1 : 0);
+		bi.height = mi.height / fontHeight + ((mi.height%fontHeight) ? 1 : 0);
+
+		bi.representation.length = bi.width * bi.height;
+
+		Image data = Image.fromMemoryImage(mi);
+
+		int ix, iy;
+		foreach(ref cell; bi.representation) {
+			/*
+			Image data = new Image(fontWidth, fontHeight);
+			foreach(y; 0 .. fontHeight) {
+				foreach(x; 0 .. fontWidth) {
+					if(x + ix >= mi.width || y + iy >= mi.height) {
+						data.putPixel(x, y, defaultTextAttributes.background);
+						continue;
+					}
+					data.putPixel(x, y, mi.imageData.colors[(iy + y) * mi.width + (ix + x)]);
+				}
+			}
+			*/
+
+			cell.nonCharacterData = new NonCharacterData_Image(data, ix, iy);
+
+			ix += fontWidth;
+
+			if(ix >= mi.width) {
+				ix = 0;
+				iy += fontHeight;
+			}
+
+		}
+
+		return bi;
+	}
+
+}
+
+// this assumes you have imported arsd.simpledisplay and/or arsd.minigui in the mixin scope
+mixin template SdpyDraw() {
+
+	// black bg, make the colors more visible
+	static Color contrastify(Color c) {
+		if(c == Color(0xcd, 0, 0))
+			return Color.fromHsl(0, 1.0, 0.75);
+		else if(c == Color(0, 0, 0xcd))
+			return Color.fromHsl(240, 1.0, 0.75);
+		else if(c == Color(229, 229, 229))
+			return Color(0x99, 0x99, 0x99);
+		else if(c == Color.black)
+			return Color(128, 128, 128);
+		else return c;
+	}
+
+	// white bg, make them more visible
+	static Color antiContrastify(Color c) {
+		if(c == Color(0xcd, 0xcd, 0))
+			return Color.fromHsl(60, 1.0, 0.25);
+		else if(c == Color(0, 0xcd, 0xcd))
+			return Color.fromHsl(180, 1.0, 0.25);
+		else if(c == Color(229, 229, 229))
+			return Color(0x99, 0x99, 0x99);
+		else if(c == Color.white)
+			return Color(128, 128, 128);
+		else return c;
+	}
+
+	struct SRectangle {
+		int left;
+		int top;
+		int right;
+		int bottom;
+	}
+
+	mixin SdpyImageSupport;
+
+	OperatingSystemFont font;
+	int fontWidth;
+	int fontHeight;
+
+	enum paddingLeft = 2;
+	enum paddingTop = 1;
+
+	void loadDefaultFont() {
+		static if(UsingSimpledisplayX11) {
+			font = new OperatingSystemFont("fixed", 14, FontWeight.medium);
+			if(font.isNull) {
+				// didn't work, it is using a
+				// fallback, prolly fixed-13 is best
+				font = new OperatingSystemFont("fixed", 13, FontWeight.medium);
+				fontWidth = 6;
+				fontHeight = 13;
+			} else {
+				fontWidth = 7;
+				fontHeight = 14;
+			}
+		} else version(Windows) {
+			this.font = new OperatingSystemFont("Courier New", 14, FontWeight.medium);
+			fontHeight = this.fontSize;
+			fontWidth = fontHeight / 2;
+		}
+	}
+
+	bool lastDrawAlternativeScreen;
+	final SRectangle redrawPainter(T)(T painter, bool forceRedraw) {
+		SRectangle invalidated;
+
+		// FIXME: anything we can do to make this faster is good
+		// on both, the XImagePainter could use optimizations
+		// on both, drawing blocks would probably be good too - not just one cell at a time, find whole blocks of stuff
+		// on both it might also be good to keep scroll commands high level somehow. idk.
+
+		// FIXME on Windows it would definitely help a lot to do just one ExtTextOutW per line, if possible. the current code is brutally slow
+
+		// Or also see https://docs.microsoft.com/en-us/windows/desktop/api/wingdi/nf-wingdi-polytextoutw
+
+		static if(is(T == WidgetPainter) || is(T == ScreenPainter)) {
+			if(font)
+				painter.setFont(font);
+		}
+
+
+		int posx = paddingLeft;
+		int posy = paddingTop;
+
+
+		char[512] bufferText;
+		bool hasBufferedInfo;
+		int bufferTextLength;
+		Color bufferForeground;
+		Color bufferBackground;
+		int bufferX = -1;
+		int bufferY = -1;
+		bool bufferReverse;
+		void flushBuffer() {
+			if(!hasBufferedInfo) {
+				return;
+			}
+
+			assert(posx - bufferX - 1 > 0);
+
+			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
+			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
+
+			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight);
+			painter.fillColor = Color.transparent;
+			// Hack for contrast!
+			if(bufferBackground == Color.black && !bufferReverse) {
+				// brighter than normal in some cases so i can read it easily
+				painter.outlineColor = contrastify(bufferForeground);
+			} else if(bufferBackground == Color.white && !bufferReverse) {
+				// darker than normal so i can read it
+				painter.outlineColor = antiContrastify(bufferForeground);
+			} else if(bufferForeground == bufferBackground) {
+				// color on itself, I want it visible too
+				auto hsl = toHsl(bufferForeground, true);
+				if(hsl[2] < 0.5)
+					hsl[2] += 0.5;
+				else
+					hsl[2] -= 0.5;
+				painter.outlineColor = fromHsl(hsl[0], hsl[1], hsl[2]);
+
+			} else {
+				// normal
+				painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
+			}
+
+			// FIXME: make sure this clips correctly
+			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
+
+			hasBufferedInfo = false;
+
+			bufferReverse = false;
+			bufferTextLength = 0;
+			bufferX = -1;
+			bufferY = -1;
+		}
+
+
+
+		int x;
+		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
+				flushBuffer();
+				goto skipDrawing;
+			}
+			cell.invalidated = false;
+			version(none) if(bufferX == -1) { // why was this ever here?
+				bufferX = posx;
+				bufferY = posy;
+			}
+
+			if(!cell.hasNonCharacterData) {
+
+				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
+				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
+				int xmax = posx + fontWidth;
+				int ymax = posy + fontHeight;
+				invalidated.right = xmax > invalidated.right ? xmax : invalidated.right;
+				invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
+
+				// FIXME: this could be more efficient, simpledisplay could get better graphics context handling
+				{
+
+					bool reverse = (cell.attributes.inverse != reverseVideo);
+					if(cell.selected)
+						reverse = !reverse;
+
+					version(with_24_bit_color) {
+						auto fgc = cell.attributes.foreground;
+						auto bgc = cell.attributes.background;
+
+						if(!(cell.attributes.foregroundIndex & 0xff00)) {
+							// this refers to a specific palette entry, which may change, so we should use that
+							fgc = palette[cell.attributes.foregroundIndex];
+						}
+						if(!(cell.attributes.backgroundIndex & 0xff00)) {
+							// this refers to a specific palette entry, which may change, so we should use that
+							bgc = palette[cell.attributes.backgroundIndex];
+						}
+
+					} else {
+						auto fgc = cell.attributes.foregroundIndex == 256 ? defaultForeground : palette[cell.attributes.foregroundIndex & 0xff];
+						auto bgc = cell.attributes.backgroundIndex == 256 ? defaultBackground : palette[cell.attributes.backgroundIndex & 0xff];
+					}
+
+					if(fgc != bufferForeground || bgc != bufferBackground || reverse != bufferReverse)
+						flushBuffer();
+					bufferReverse = reverse;
+					bufferBackground = bgc;
+					bufferForeground = fgc;
+				}
+			}
+
+				if(!cell.hasNonCharacterData) {
+					char[4] str;
+					import std.utf;
+					// now that it is buffered, we do want to draw it this way...
+					//if(cell.ch != ' ') { // no point wasting time drawing spaces, which are nothing; the bg rectangle already did the important thing
+						try {
+							auto stride = encode(str, cell.ch);
+							if(bufferTextLength + stride > bufferText.length)
+								flushBuffer();
+							bufferText[bufferTextLength .. bufferTextLength + stride] = str[0 .. stride];
+							bufferTextLength += stride;
+
+							if(bufferX == -1) {
+								bufferX = posx;
+								bufferY = posy;
+							}
+							hasBufferedInfo = true;
+						} catch(Exception e) {
+							import std.stdio;
+							writeln(cast(uint) cell.ch, " :: ", e.msg);
+						}
+					//}
+				} else if(cell.nonCharacterData !is null) {
+					//import std.stdio; writeln(cast(void*) cell.nonCharacterData);
+					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
+						flushBuffer();
+						// FIXME this should probably just be the default color but meh
+						painter.outlineColor = Color.white;
+						painter.fillColor = Color.white;
+						painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
+						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
+					}
+				}
+
+				if(!cell.hasNonCharacterData)
+				if(cell.attributes.underlined) {
+					// the posx adjustment is because the buffer assumes it is going
+					// to be flushed after advancing, but here, we're doing it mid-character
+					// FIXME: we should just underline the whole thing consecutively, with the buffer
+					posx += fontWidth;
+					flushBuffer();
+					posx -= fontWidth;
+					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth, posy + fontHeight - 1));
+				}
+			skipDrawing:
+
+				posx += fontWidth;
+			x++;
+			if(x == screenWidth) {
+				flushBuffer();
+				x = 0;
+				posy += fontHeight;
+				posx = paddingLeft;
+			}
+		}
+
+		if(cursorShowing) {
+			painter.fillColor = cursorColor;
+			painter.outlineColor = cursorColor;
+			painter.rasterOp = RasterOp.xor;
+
+			posx = cursorPosition.x * fontWidth + paddingLeft;
+			posy = cursorPosition.y * fontHeight + paddingTop;
+
+			int cursorWidth = fontWidth;
+			int cursorHeight = fontHeight;
+
+			final switch(cursorStyle) {
+				case CursorStyle.block:
+					painter.drawRectangle(Point(posx, posy), cursorWidth, cursorHeight);
+				break;
+				case CursorStyle.underline:
+					painter.drawRectangle(Point(posx, posy + cursorHeight - 2), cursorWidth, 2);
+				break;
+				case CursorStyle.bar:
+					painter.drawRectangle(Point(posx, posy), 2, cursorHeight);
+				break;
+			}
+			painter.rasterOp = RasterOp.normal;
+
+			// since the cursor draws over the cell, we need to make sure it is redrawn each time too
+			auto buffer = alternateScreenActive ? (&alternateScreen) : (&normalScreen);
+			if(cursorX >= 0 && cursorY >= 0 && cursorY < screenHeight && cursorX < screenWidth) {
+				(*buffer)[cursorY * screenWidth + cursorX].invalidated = true;
+			}
+
+			invalidated.left = posx < invalidated.left ? posx : invalidated.left;
+			invalidated.top = posy < invalidated.top ? posy : invalidated.top;
+			int xmax = posx + fontWidth;
+			int ymax = xmax + fontHeight;
+			invalidated.right = xmax > invalidated.right ? xmax : invalidated.right;
+			invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
+		}
+
+		lastDrawAlternativeScreen = alternateScreenActive;
+
+		return invalidated;
 	}
 }
 

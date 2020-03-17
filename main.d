@@ -126,13 +126,6 @@ import arsd.script;
 
 import arsd.color;
 
-struct SRectangle {
-	int left;
-	int top;
-	int right;
-	int bottom;
-}
-
 class DebugWindow : MainWindow {
 	SimpleWindow window;
 	TerminalEmulatorWindow te;
@@ -330,7 +323,7 @@ import arsd.simpledisplay;
 import arsd.ttf;
 struct XImagePainter {
 	Image img;
-	TtfFont* font;
+	TtfFont* ttfFont;
 	int fontWidth;
 
 	immutable {
@@ -348,9 +341,9 @@ struct XImagePainter {
 		return d[0 .. ending - d];
 	}
 
-	this(Image i, TtfFont* font, int fontWidth) {
+	this(Image i, TtfFont* ttfFont, int fontWidth) {
 		this.img = i;
-		this.font = font;
+		this.ttfFont = ttfFont;
 		this.fontWidth = fontWidth;
 
 		 nextLineAdjustment = img.adjustmentForNextLine();
@@ -533,7 +526,7 @@ struct XImagePainter {
 				char[4] buffer;
 				import std.utf;
 				auto slice = buffer[0 .. encode(buffer, ch)];
-				info.bitmap = font.renderString(slice, TerminalEmulatorWindow.fontSize, info.w, info.h);
+				info.bitmap = ttfFont.renderString(slice, TerminalEmulatorWindow.fontSize, info.w, info.h);
 				characters[ch] = info;
 			}
 
@@ -584,20 +577,8 @@ struct XImagePainter {
 	}
 }
 
-XImagePainter draw(Image i, TtfFont* font, int fontWidth) {
-	return XImagePainter(i, font, fontWidth);
-}
-
-class NonCharacterData_Image : NonCharacterData {
-	Image data;
-	int imageOffsetX;
-	int imageOffsetY;
-
-	this(Image data, int x, int y) {
-		this.data = data;
-		this.imageOffsetX = x;
-		this.imageOffsetY = y;
-	}
+XImagePainter draw(Image i, TtfFont* ttfFont, int fontWidth) {
+	return XImagePainter(i, ttfFont, fontWidth);
 }
 
 /**
@@ -607,57 +588,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	override void requestExit() {
 		EventLoop.get.exit();
-	}
-
-
-	protected override BrokenUpImage handleBinaryExtensionData(const(ubyte)[] binaryData) {
-		TrueColorImage mi;
-
-		if(binaryData.length > 8 && binaryData[1] == 'P' && binaryData[2] == 'N' && binaryData[3] == 'G') {
-			import arsd.png;
-			mi = imageFromPng(readPng(binaryData)).getAsTrueColorImage();
-		} else if(binaryData.length > 8 && binaryData[0] == 'B' && binaryData[1] == 'M') {
-			import arsd.bmp;
-			mi = readBmp(binaryData).getAsTrueColorImage();
-		} else {
-			return BrokenUpImage();
-		}
-
-		BrokenUpImage bi;
-		bi.width = mi.width / fontWidth + ((mi.width%fontWidth) ? 1 : 0);
-		bi.height = mi.height / fontHeight + ((mi.height%fontHeight) ? 1 : 0);
-
-		bi.representation.length = bi.width * bi.height;
-
-		Image data = Image.fromMemoryImage(mi);
-
-		int ix, iy;
-		foreach(ref cell; bi.representation) {
-			/*
-			Image data = new Image(fontWidth, fontHeight);
-			foreach(y; 0 .. fontHeight) {
-				foreach(x; 0 .. fontWidth) {
-					if(x + ix >= mi.width || y + iy >= mi.height) {
-						data.putPixel(x, y, defaultTextAttributes.background);
-						continue;
-					}
-					data.putPixel(x, y, mi.imageData.colors[(iy + y) * mi.width + (ix + x)]);
-				}
-			}
-			*/
-
-			cell.nonCharacterData = new NonCharacterData_Image(data, ix, iy);
-
-			ix += fontWidth;
-
-			if(ix >= mi.width) {
-				ix = 0;
-				iy += fontHeight;
-			}
-
-		}
-
-		return bi;
 	}
 
 	protected override void changeCursorStyle(CursorStyle s) { }
@@ -729,7 +659,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	import arsd.simpledisplay;
 
-	TtfFont font;
+	TtfFont ttfFont;
 
 	bool debugMode;
 
@@ -764,9 +694,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			}
 	}
 
-	version(Windows)
-	HFONT hFont;
-
 	version(winpty)
 		HPCON hpc;
 
@@ -782,27 +709,10 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		}
 
 		if(usingTtf) {
-			font = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
-			font.getStringSize("M", fontSize, fontWidth, fontHeight);
+			ttfFont = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
+			ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
-			static if(UsingSimpledisplayX11) {
-				auto font = new OperatingSystemFont("fixed", 14, FontWeight.medium);
-				if(font.isNull) {
-					// didn't work, it is using a
-					// fallback, prolly fixed-13 is best
-					xfontstr = "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*";
-					fontWidth = 6;
-					fontHeight = 13;
-				} else {
-					xfontstr = "-*-fixed-medium-r-*-*-14-*-*-*-*-*-*-*";
-					fontWidth = 7;
-					fontHeight = 14;
-				}
-			} else version(Windows) {
-				hFont = CreateFontA(this.fontSize, 0, 0, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, "Courier New");
-				fontHeight = this.fontSize;
-				fontWidth = fontHeight / 2;
-			}
+			loadDefaultFont();
 		}
 
 		auto desiredWidth = 80;
@@ -1049,16 +959,9 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	SimpleWindow window;
 
-	int fontWidth;
-	int fontHeight;
-
 	static int fontSize = 14;
 
-	enum paddingLeft = 2;
-	enum paddingTop = 1;
-
 	Image img;
-
 
 	bool clearScreenRequested = true;
 	void redraw(bool forceRedraw = false) {
@@ -1076,243 +979,14 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		}
 
 		if(usingTtf) {
-			auto invalidated = redrawPainter(img.draw(&font, fontWidth), forceRedraw);
+			auto invalidated = redrawPainter(img.draw(&ttfFont, fontWidth), forceRedraw);
 			if(invalidated.right || invalidated.bottom)
 			painter.drawImage(Point(0, 0), img, Point(invalidated.left, invalidated.top), invalidated.right, invalidated.bottom);
 		} else
 			redrawPainter(painter, forceRedraw);
 	}
 
-	bool lastDrawAlternativeScreen;
-	final SRectangle redrawPainter(T)(T painter, bool forceRedraw) {
-		SRectangle invalidated;
-
-		// FIXME: anything we can do to make this faster is good
-		// on both, the XImagePainter could use optimizations
-		// on both, drawing blocks would probably be good too - not just one cell at a time, find whole blocks of stuff
-		// on both it might also be good to keep scroll commands high level somehow. idk.
-
-		// FIXME on Windows it would definitely help a lot to do just one ExtTextOutW per line, if possible. the current code is brutally slow
-
-		// Or also see https://docs.microsoft.com/en-us/windows/desktop/api/wingdi/nf-wingdi-polytextoutw
-
-		version(Windows)
-		static if(is(T == ScreenPainter)) {
-			SelectObject(painter.impl.hdc, hFont);
-		}
-
-
-		int posx = paddingLeft;
-		int posy = paddingTop;
-
-
-		char[512] bufferText;
-		bool hasBufferedInfo;
-		int bufferTextLength;
-		Color bufferForeground;
-		Color bufferBackground;
-		int bufferX = -1;
-		int bufferY = -1;
-		bool bufferReverse;
-		void flushBuffer() {
-			if(!hasBufferedInfo) {
-				return;
-			}
-
-			assert(posx - bufferX - 1 > 0);
-
-			painter.fillColor = bufferReverse ? bufferForeground : bufferBackground;
-			painter.outlineColor = bufferReverse ? bufferForeground : bufferBackground;
-
-			painter.drawRectangle(Point(bufferX, bufferY), posx - bufferX, fontHeight);
-			painter.fillColor = Color.transparent;
-			// Hack for contrast!
-			if(bufferBackground == Color.black && !bufferReverse) {
-				// brighter than normal in some cases so i can read it easily
-				painter.outlineColor = contrastify(bufferForeground);
-			} else if(bufferBackground == Color.white && !bufferReverse) {
-				// darker than normal so i can read it
-				painter.outlineColor = antiContrastify(bufferForeground);
-			} else if(bufferForeground == bufferBackground) {
-				// color on itself, I want it visible too
-				auto hsl = toHsl(bufferForeground, true);
-				if(hsl[2] < 0.5)
-					hsl[2] += 0.5;
-				else
-					hsl[2] -= 0.5;
-				painter.outlineColor = fromHsl(hsl[0], hsl[1], hsl[2]);
-
-			} else {
-				// normal
-				painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
-			}
-
-			// FIXME: make sure this clips correctly
-			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
-
-			hasBufferedInfo = false;
-
-			bufferReverse = false;
-			bufferTextLength = 0;
-			bufferX = -1;
-			bufferY = -1;
-		}
-
-
-
-		int x;
-		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
-			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
-				flushBuffer();
-				goto skipDrawing;
-			}
-			cell.invalidated = false;
-			version(none) if(bufferX == -1) { // why was this ever here?
-				bufferX = posx;
-				bufferY = posy;
-			}
-
-			if(!cell.hasNonCharacterData) {
-
-				invalidated.left = posx < invalidated.left ? posx : invalidated.left;
-				invalidated.top = posy < invalidated.top ? posy : invalidated.top;
-				int xmax = posx + fontWidth;
-				int ymax = posy + fontHeight;
-				invalidated.right = xmax > invalidated.right ? xmax : invalidated.right;
-				invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
-
-				// FIXME: this could be more efficient, simpledisplay could get better graphics context handling
-				{
-
-					bool reverse = (cell.attributes.inverse != reverseVideo);
-					if(cell.selected)
-						reverse = !reverse;
-
-					version(with_24_bit_color) {
-						auto fgc = cell.attributes.foreground;
-						auto bgc = cell.attributes.background;
-
-						if(!(cell.attributes.foregroundIndex & 0xff00)) {
-							// this refers to a specific palette entry, which may change, so we should use that
-							fgc = palette[cell.attributes.foregroundIndex];
-						}
-						if(!(cell.attributes.backgroundIndex & 0xff00)) {
-							// this refers to a specific palette entry, which may change, so we should use that
-							bgc = palette[cell.attributes.backgroundIndex];
-						}
-
-					} else {
-						auto fgc = cell.attributes.foregroundIndex == 256 ? defaultForeground : palette[cell.attributes.foregroundIndex & 0xff];
-						auto bgc = cell.attributes.backgroundIndex == 256 ? defaultBackground : palette[cell.attributes.backgroundIndex & 0xff];
-					}
-
-					if(fgc != bufferForeground || bgc != bufferBackground || reverse != bufferReverse)
-						flushBuffer();
-					bufferReverse = reverse;
-					bufferBackground = bgc;
-					bufferForeground = fgc;
-				}
-			}
-
-				if(!cell.hasNonCharacterData) {
-					char[4] str;
-					import std.utf;
-					// now that it is buffered, we do want to draw it this way...
-					//if(cell.ch != ' ') { // no point wasting time drawing spaces, which are nothing; the bg rectangle already did the important thing
-						try {
-							auto stride = encode(str, cell.ch);
-							if(bufferTextLength + stride > bufferText.length)
-								flushBuffer();
-							bufferText[bufferTextLength .. bufferTextLength + stride] = str[0 .. stride];
-							bufferTextLength += stride;
-
-							if(bufferX == -1) {
-								bufferX = posx;
-								bufferY = posy;
-							}
-							hasBufferedInfo = true;
-						} catch(Exception e) {
-							import std.stdio;
-							writeln(cast(uint) cell.ch, " :: ", e.msg);
-						}
-					//}
-				} else if(cell.nonCharacterData !is null) {
-					//import std.stdio; writeln(cast(void*) cell.nonCharacterData);
-					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
-						flushBuffer();
-						// FIXME this should probably just be the default color but meh
-						painter.outlineColor = Color.white;
-						painter.fillColor = Color.white;
-						painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
-						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
-					}
-				}
-
-				if(!cell.hasNonCharacterData)
-				if(cell.attributes.underlined) {
-					// the posx adjustment is because the buffer assumes it is going
-					// to be flushed after advancing, but here, we're doing it mid-character
-					// FIXME: we should just underline the whole thing consecutively, with the buffer
-					posx += fontWidth;
-					flushBuffer();
-					posx -= fontWidth;
-					painter.drawLine(Point(posx, posy + fontHeight - 1), Point(posx + fontWidth, posy + fontHeight - 1));
-				}
-			skipDrawing:
-
-				posx += fontWidth;
-			x++;
-			if(x == screenWidth) {
-				flushBuffer();
-				x = 0;
-				posy += fontHeight;
-				posx = paddingLeft;
-			}
-		}
-
-		if(cursorShowing) {
-			painter.fillColor = cursorColor;
-			painter.outlineColor = cursorColor;
-			painter.rasterOp = RasterOp.xor;
-
-			posx = cursorPosition.x * fontWidth + paddingLeft;
-			posy = cursorPosition.y * fontHeight + paddingTop;
-
-			int cursorWidth = fontWidth;
-			int cursorHeight = fontHeight;
-
-			final switch(cursorStyle) {
-				case CursorStyle.block:
-					painter.drawRectangle(Point(posx, posy), cursorWidth, cursorHeight);
-				break;
-				case CursorStyle.underline:
-					painter.drawRectangle(Point(posx, posy + cursorHeight - 2), cursorWidth, 2);
-				break;
-				case CursorStyle.bar:
-					painter.drawRectangle(Point(posx, posy), 2, cursorHeight);
-				break;
-			}
-			painter.rasterOp = RasterOp.normal;
-
-			// since the cursor draws over the cell, we need to make sure it is redrawn each time too
-			auto buffer = alternateScreenActive ? (&alternateScreen) : (&normalScreen);
-			if(cursorX >= 0 && cursorY >= 0 && cursorY < screenHeight && cursorX < screenWidth) {
-				(*buffer)[cursorY * screenWidth + cursorX].invalidated = true;
-			}
-
-			invalidated.left = posx < invalidated.left ? posx : invalidated.left;
-			invalidated.top = posy < invalidated.top ? posy : invalidated.top;
-			int xmax = posx + fontWidth;
-			int ymax = xmax + fontHeight;
-			invalidated.right = xmax > invalidated.right ? xmax : invalidated.right;
-			invalidated.bottom = ymax > invalidated.bottom ? ymax : invalidated.bottom;
-		}
-
-		lastDrawAlternativeScreen = alternateScreenActive;
-
-		return invalidated;
-	}
-
+	mixin SdpyDraw;
 }
 
 
@@ -1400,28 +1074,3 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		+/
 
 
-// black bg, make the colors more visible
-Color contrastify(Color c) {
-	if(c == Color(0xcd, 0, 0))
-		return Color.fromHsl(0, 1.0, 0.75);
-	else if(c == Color(0, 0, 0xcd))
-		return Color.fromHsl(240, 1.0, 0.75);
-	else if(c == Color(229, 229, 229))
-		return Color(0x99, 0x99, 0x99);
-	else if(c == Color.black)
-		return Color(128, 128, 128);
-	else return c;
-}
-
-// white bg, make them more visible
-Color antiContrastify(Color c) {
-	if(c == Color(0xcd, 0xcd, 0))
-		return Color.fromHsl(60, 1.0, 0.25);
-	else if(c == Color(0, 0xcd, 0xcd))
-		return Color.fromHsl(180, 1.0, 0.25);
-	else if(c == Color(229, 229, 229))
-		return Color(0x99, 0x99, 0x99);
-	else if(c == Color.white)
-		return Color(128, 128, 128);
-	else return c;
-}
