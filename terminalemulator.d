@@ -2,10 +2,14 @@
 	FIXME: writing a line in color then a line in ordinary does something
 	wrong.
 
+	 # huh if i do underline then change color it undoes the underline
+
 	FIXME: make shift+enter send something special to the application
 		and shift+space, etc.
 		identify itself somehow too for client extensions
 		ctrl+space is supposed to send char 0.
+
+	ctrl+click on url pattern could open in browser perhaps
 
 	FIXME: scroll stuff should be higher level  in the implementation.
 	so like scroll Rect, DirectionAndAmount
@@ -33,8 +37,9 @@ enum extensionMagicIdentifier = "ARSD Terminal Emulator binary extension data fo
 
 	90 - clipboard extensions
 	91 - image extensions
+	92 - hyperlink extensions
 +/
-enum terminalIdCode = "\033[?64;1;2;6;9;15;16;17;18;21;22;28;90;91c";
+enum terminalIdCode = "\033[?64;1;2;6;9;15;16;17;18;21;22;28;90;91;92c";
 
 interface NonCharacterData {
 	//const(ubyte)[] serialize();
@@ -181,6 +186,23 @@ class TerminalEmulator {
 		}
 	}
 
+	// my custom extension.... the data is the text content of the link, the identifier is some bits attached to the unit
+	public void sendHyperlinkData(scope const(dchar)[] data, uint identifier) {
+		if(bracketedHyperlinkMode) {
+			sendToApplication("\033[220~");
+
+			import std.conv;
+			// FIXME: that second 0 is a "command", like which menu option, which mouse button, etc.
+			sendToApplication(to!string(identifier) ~ ";0;" ~ to!string(data));
+
+			sendToApplication("\033[221~");
+		} else {
+			// without bracketed hyperlink, it simulates a paste
+			import std.conv;
+			sendPasteData(to!string(data));
+		}
+	}
+
 	public void sendPasteData(scope const(char)[] data) {
 		//if(pasteDataPending.length)
 			//throw new Exception("paste data being discarded, wtf, shouldnt happen");
@@ -267,6 +289,37 @@ class TerminalEmulator {
 				auto text = getSelectedText();
 				if(text.length) {
 					copyToPrimary(text);
+				} else if(!mouseButtonReleaseTracking || shift) {
+					// hyperlink check
+					int idx = termY * screenWidth + termX;
+					auto screen = (alternateScreenActive ? alternateScreen : normalScreen);
+
+					if(screen[idx].hyperlinkStatus & 0x01) {
+						// it is a link! need to find the beginning and the end
+						auto start = idx;
+						auto end = idx;
+						auto value = screen[idx].hyperlinkStatus;
+						while(start > 0 && screen[start].hyperlinkStatus == value)
+							start--;
+						if(screen[start].hyperlinkStatus != value)
+							start++;
+						while(end < screen.length && screen[end].hyperlinkStatus == value)
+							end++;
+
+						uint number;
+						dchar[64] buffer;
+						foreach(i, ch; screen[start .. end]) {
+							if(i >= buffer.length)
+								break;
+							if(!ch.hasNonCharacterData)
+								buffer[i] = ch.ch;
+							if(i < 16) {
+								number |= (ch.hyperlinkBit ? 1 : 0) << i;
+							}
+						}
+
+						sendHyperlinkData(buffer[0 .. end - start], number);
+					}
 				}
 			}
 
@@ -462,6 +515,8 @@ class TerminalEmulator {
 			newLine(false);
 			cueScrollback = false;
 		}
+
+		notifyScrollbarRelevant(true, true);
 	}
 
 	protected void outputOccurred() { }
@@ -687,15 +742,55 @@ class TerminalEmulator {
 		void faint(bool t) { attrStore &= ~128; if(t) attrStore |= 128; } ///
 
 		// if the high bit here is set, you should use the full Color values if possible, and the value here sans the high bit if not
-		ushort foregroundIndex; /// .
-		ushort backgroundIndex; /// .
 
-		version(with_24_bit_color) {
-			Color foreground; /// .
-			Color background; /// .
+		bool foregroundIsDefault() { return (attrStore & 256) ? true : false; } ///
+		void foregroundIsDefault(bool t) { attrStore &= ~256; if(t) attrStore |= 256; } ///
+
+		bool backgroundIsDefault() { return (attrStore & 512) ? true : false; } ///
+		void backgroundIsDefault(bool t) { attrStore &= ~512; if(t) attrStore |= 512; } ///
+
+		// I am doing all this to  get the store a bit smaller but
+		// I could go back to just plain `ushort foregroundIndex` etc.
+
+		///
+		@property ushort foregroundIndex() {
+			if(foregroundIsDefault)
+				return 256;
+			else
+				return foregroundIndexStore;
+		}
+		///
+		@property ushort backgroundIndex() {
+			if(backgroundIsDefault)
+				return 256;
+			else
+				return backgroundIndexStore;
+		}
+		///
+		@property void foregroundIndex(ushort v) {
+			if(v == 256)
+				foregroundIsDefault = true;
+			else
+				foregroundIsDefault = false;
+			foregroundIndexStore = cast(ubyte) v;
+		}
+		///
+		@property void backgroundIndex(ushort v) {
+			if(v == 256)
+				backgroundIsDefault = true;
+			else
+				backgroundIsDefault = false;
+			backgroundIndexStore = cast(ubyte) v;
 		}
 
-		ubyte attrStore = 0;
+		ubyte foregroundIndexStore; /// the internal storage
+		ubyte backgroundIndexStore; /// ditto
+		ushort attrStore = 0; /// ditto
+
+		version(with_24_bit_color) {
+			Color foreground; /// ditto
+			Color background; /// ditto
+		}
 	}
 
 		//pragma(msg, TerminalCell.sizeof);
@@ -732,6 +827,8 @@ class TerminalEmulator {
 			nonCharacterDataStore = c;
 		}
 
+		// bits: RRHLLNSI
+		// R = reserved, H = hyperlink ID bit, L = link, N = non-character data, S = selected, I = invalidated
 		ubyte attrStore = 1;  // just invalidated to start
 
 		bool invalidated() { return (attrStore & 1) ? true : false; } /// if it needs to be redrawn
@@ -742,7 +839,19 @@ class TerminalEmulator {
 
 		bool hasNonCharacterData() { return (attrStore & 4) ? true : false; } ///
 		void hasNonCharacterData(bool t) { attrStore &= ~4; if(t) attrStore |= 4; }
+
+		// 0 means it is not a hyperlink. Otherwise, it just alternates between 1 and 3 to tell adjacent links apart.
+		// value of 2 is reserved for future use.
+		ubyte hyperlinkStatus() { return (attrStore & 0b11000) >> 3; }
+		void hyperlinkStatus(ubyte t) { assert(t < 4); attrStore &= ~0b11000; attrStore |= t << 3; }
+
+		bool hyperlinkBit() { return (attrStore & 0b100000) >> 5; }
+		void hyperlinkBit(bool t) { (attrStore &= ~0b100000); if(t) attrStore |= 0b100000; }
 	}
+
+	bool hyperlinkFlipper;
+	bool hyperlinkActive;
+	int hyperlinkNumber;
 
 	/// Cursor position, zero based. (0,0) == upper left. (0, 1) == second row, first column.
 	static struct CursorPosition {
@@ -1102,13 +1211,62 @@ class TerminalEmulator {
 		bool scrollbackCursorShowing;
 		int scrollbackCursorX;
 		int scrollbackCursorY;
-		protected bool scrollingBack;
+	}
+
+	protected {
+		bool scrollingBack;
 
 		int currentScrollback;
 		int currentScrollbackX;
 	}
 
 	// FIXME: if it is resized while scrolling back, stuff can get messed up
+
+	private int scrollbackLength_;
+	private void scrollbackLength(int i) {
+		scrollbackLength_ = i;
+	}
+
+	int scrollbackLength() {
+		return scrollbackLength_;
+	}
+
+	private int scrollbackWidth_;
+	int scrollbackWidth() {
+		return screenWidth;
+		//return scrollbackWidth_; // FIME
+	}
+
+	/* virtual */ void notifyScrollbackAdded() {}
+	/* virtual */ void notifyScrollbarRelevant(bool isRelevantHorizontally, bool isRelevantVertically) {}
+	/* virtual */ void notifyScrollbarPosition(int x, int y) {}
+
+	// coordinates are for a scroll bar, where 0,0 is the beginning of history
+	void scrollbackTo(int x, int y) {
+		if(alternateScreenActive && !scrollingBack)
+			return;
+
+		if(!scrollingBack)
+			startScrollback();
+
+		if(y < 0)
+			y = 0;
+		if(x < 0)
+			x = 0;
+
+		currentScrollbackX = x;
+		currentScrollback = scrollbackLength - y;
+
+		if(currentScrollback < 0)
+			currentScrollback = 0;
+
+		if(currentScrollback == 0)
+			endScrollback();
+		else {
+			cls();
+			showScrollbackOnScreen(alternateScreen, currentScrollback, false, currentScrollbackX);
+		}
+	}
 
 	void scrollback(int delta, int deltaX = 0) {
 		if(alternateScreenActive && !scrollingBack)
@@ -1152,6 +1310,7 @@ class TerminalEmulator {
 		else {
 			cls();
 			showScrollbackOnScreen(alternateScreen, currentScrollback, scrollbackReflow, currentScrollbackX);
+			notifyScrollbarPosition(currentScrollbackX, max - currentScrollback);
 		}
 	}
 
@@ -1179,6 +1338,12 @@ class TerminalEmulator {
 		cursorShowing = scrollbackCursorShowing;
 		alternateScreen = scrollbackMainScreen;
 		alternateScreenActive = false;
+
+		currentScrollback = 0;
+		currentScrollbackX = 0;
+
+		notifyScrollbarPosition(0, int.max);
+
 		return true;
 	}
 
@@ -1201,6 +1366,10 @@ class TerminalEmulator {
 				file.write(c.ch); // I hope this is buffered
 			file.writeln();
 		}
+	}
+
+	public void drawScrollback() {
+		showScrollbackOnScreen(normalScreen, 0, true, 0);
 	}
 
 	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar, bool reflow, int howFarX) {
@@ -1322,6 +1491,16 @@ class TerminalEmulator {
 		// the property ensures these are within bounds so this set just forces that
 		cursorY = cursorY;
 		cursorX = cursorX;
+
+
+		int count = cast(int) scrollbackBuffer.length;
+		if(scrollbackReflow) {
+			foreach(line; scrollbackBuffer[])
+				count += cast(int) line.length / screenWidth;
+		}
+		scrollbackLength = count;
+		notifyScrollbackAdded();
+		notifyScrollbarPosition(currentScrollbackX, currentScrollback ? scrollbackLength - currentScrollback : int.max);
 	}
 
 	private CursorPosition popSavedCursor() {
@@ -1351,6 +1530,16 @@ class TerminalEmulator {
 		savedCursors ~= pos;
 	}
 
+	public void clearScrollbackHistory() {
+		if(scrollingBack)
+			endScrollback();
+		scrollbackBuffer.clear();
+		scrollbackLength_ = 0;
+		scrollbackWidth_ = 0;
+
+		notifyScrollbackAdded();
+	}
+
 	/* FIXME: i want these to be private */
 	protected {
 		TextAttributes currentAttributes;
@@ -1369,6 +1558,7 @@ class TerminalEmulator {
 		string[] titleStack;
 
 		bool bracketedPasteMode;
+		bool bracketedHyperlinkMode;
 		bool mouseButtonTracking;
 		private bool _mouseMotionTracking;
 		bool mouseButtonReleaseTracking;
@@ -1420,6 +1610,11 @@ class TerminalEmulator {
 
 			size_t length() {
 				return length_;
+			}
+
+			void clear() {
+				start = 0;
+				length_ = 0;
 			}
 
 			void opOpAssign(string op : "~")(TerminalCell[] line) {
@@ -1569,6 +1764,12 @@ class TerminalEmulator {
 				tc.attributes = currentAttributes;
 				tc.invalidated = true;
 
+				if(hyperlinkActive) {
+					tc.hyperlinkStatus = hyperlinkFlipper ? 3 : 1;
+					tc.hyperlinkBit = hyperlinkNumber & 0x01;
+					hyperlinkNumber >>= 1;
+				}
+
 				addOutput(tc);
 			}
 
@@ -1649,15 +1850,24 @@ class TerminalEmulator {
 			}
 		}
 
+		public void addScrollbackLine(TerminalCell[] line) {
+			scrollbackBuffer ~= line;
+
+			scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
+			notifyScrollbackAdded();
+			if(!alternateScreenActive)
+				notifyScrollbarPosition(0, int.max);
+		}
+
 		bool insertMode = false;
 		void newLine(bool commitScrollback) {
 			if(!alternateScreenActive && commitScrollback) {
 				// I am limiting this because obscenely long lines are kinda useless anyway and
 				// i don't want it to eat excessive memory when i spam some thing accidentally
 				if(currentScrollbackLine.length < 1024)
-					scrollbackBuffer ~= currentScrollbackLine.sliceTrailingWhitespace;
+					addScrollbackLine(currentScrollbackLine.sliceTrailingWhitespace);
 				else
-					scrollbackBuffer ~= currentScrollbackLine[0 .. 1024].sliceTrailingWhitespace;
+					addScrollbackLine(currentScrollbackLine[0 .. 1024].sliceTrailingWhitespace);
 
 				currentScrollbackLine = null;
 				currentScrollbackLine.reserve(64);
@@ -1721,9 +1931,9 @@ class TerminalEmulator {
 					normalScreen[idx .. idx + screenWidth] = plain;
 				}
 			} else {
-				if(insertMode)
+				if(insertMode) {
 					scrollDown();
-				else
+				} else
 					cursorY = cursorY + 1;
 			}
 
@@ -1839,9 +2049,10 @@ class TerminalEmulator {
 
 				foreach(i, arg; split(argsSection, ";")) {
 					int value;
-					if(arg.length)
+					if(arg.length) {
+						//import std.stdio; writeln(esc);
 						value = to!int(arg);
-					else
+					} else
 						value = int.min; // defaults[i];
 
 					if(args.length > i)
@@ -2153,6 +2364,11 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						}
 					break;
 					case 'm':
+						// FIXME  used by xterm to decide whether to construct
+						// CSI > Pp ; Pv m CSI > Pp m Set/reset key modifier options, xterm.
+						if(esc[1] == '>')
+							goto default;
+						// done
 						argsLoop: foreach(argIdx, arg; getArgs(0))
 						switch(arg) {
 							case 0:
@@ -2390,7 +2606,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 						}
 						else
 					//import std.stdio; writeln("h magic ", cast(string) esc);
-						foreach(arg; getArgsBase(2, null))
+						foreach(arg; getArgsBase(2, null)) {
+							if(arg > 65535) {
+								/* Extensions */
+								if(arg < 65536 + 65535) {
+									// activate hyperlink
+									hyperlinkFlipper = !hyperlinkFlipper;
+									hyperlinkActive = true;
+									hyperlinkNumber = arg - 65536;
+								}
+							} else
 							switch(arg) {
 								case 1:
 									// application cursor keys
@@ -2430,6 +2655,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									scrollLock = false;
 									pushSavedCursor(cursorPosition);
 									cls();
+									notifyScrollbarRelevant(false, false);
 								break;
 								case 1000:
 									// send mouse X&Y on button press and release
@@ -2515,18 +2741,24 @@ URXVT (1015)
 								case 2004:
 									bracketedPasteMode = true;
 								break;
+								case 3004:
+									bracketedHyperlinkMode = true;
+								break;
 								case 1047:
 								case 47:
 									alternateScreenActive = true;
 									scrollLock = false;
 									cls();
+									notifyScrollbarRelevant(false, false);
 								break;
 								case 25:
 									cursorShowing = true;
 								break;
-								/* Extensions */
+
+								/* Done */
 								default: unknownEscapeSequence(cast(string) esc);
 							}
+						}
 					break;
 					case 'p':
 						// it is asking a question... and tbh i don't care.
@@ -2554,7 +2786,12 @@ URXVT (1015)
 							default: unknownEscapeSequence(cast(string) esc);
 						}
 						else
-						foreach(arg; getArgsBase(2, null))
+						foreach(arg; getArgsBase(2, null)) {
+							if(arg > 65535) {
+								/* Extensions */
+								if(arg < 65536 + 65535)
+									hyperlinkActive = false;
+							}
 							switch(arg) {
 								case 1:
 									// normal cursor keys
@@ -2607,6 +2844,9 @@ URXVT (1015)
 								case 2004:
 									bracketedPasteMode = false;
 								break;
+								case 3004:
+									bracketedHyperlinkMode = false;
+								break;
 								case 1047:
 								case 47:
 									returnToNormalScreen();
@@ -2616,6 +2856,7 @@ URXVT (1015)
 								break;
 								default: unknownEscapeSequence(cast(string) esc);
 							}
+						}
 					break;
 					case 'X':
 						// erase characters
@@ -3563,8 +3804,21 @@ mixin template SdpyImageSupport() {
 		} else if(binaryData.length > 8 && binaryData[0] == 'B' && binaryData[1] == 'M') {
 			import arsd.bmp;
 			mi = readBmp(binaryData).getAsTrueColorImage();
+		} else if(binaryData.length > 2 && binaryData[0] == 0xff && binaryData[1] == 0xd8) {
+			import arsd.jpeg;
+			mi = readJpegFromMemory(binaryData).getAsTrueColorImage();
+		} else if(binaryData.length > 2 && binaryData[0] == '<') {
+			import arsd.svg;
+			NSVG* image = nsvgParse(cast(const(char)[]) binaryData);
+			if(image is null)
+				return BrokenUpImage();
 
-			// FIXME: let's add svg and jpg
+			int w = cast(int) image.width + 1;
+			int h = cast(int) image.height + 1;
+			NSVGrasterizer rast = nsvgCreateRasterizer();
+			mi = new TrueColorImage(w, h);
+			rasterize(rast, image, 0, 0, 1, mi.imageData.bytes.ptr, w, h, w*4);
+			image.kill();
 		} else {
 			return BrokenUpImage();
 		}
