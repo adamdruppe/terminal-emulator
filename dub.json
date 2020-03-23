@@ -15,15 +15,15 @@
 			"sourceFiles": ["terminalemulator.d", "main.d"],
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"dependencies": {
-				"arsd-official:simpledisplay":">=6.0.0",
-				"arsd-official:jsvar":">=6.0.0",
-				"arsd-official:script":">=6.0.0",
-				"arsd-official:minigui":">=6.0.0",
-				"arsd-official:ttf":">=6.0.0",
-				"arsd-official:png":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:bmp":">=6.0.0"
+				"arsd-official:simpledisplay":">=6.0.2",
+				"arsd-official:jsvar":">=6.0.2",
+				"arsd-official:script":">=6.0.2",
+				"arsd-official:minigui":">=6.0.2",
+				"arsd-official:ttf":">=6.0.2",
+				"arsd-official:png":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:bmp":">=6.0.2"
 			}
 		},
 		{
@@ -34,15 +34,15 @@
 			"libs-posix": ["util"],
 			"sourceFiles": ["terminalemulator.d", "mactabs.d"],
 			"dependencies": {
-				"arsd-official:simpledisplay":">=6.0.0",
-				"arsd-official:jsvar":">=6.0.0",
-				"arsd-official:script":">=6.0.0",
-				"arsd-official:minigui":">=6.0.0",
-				"arsd-official:ttf":">=6.0.0",
-				"arsd-official:png":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:bmp":">=6.0.0"
+				"arsd-official:simpledisplay":">=6.0.2",
+				"arsd-official:jsvar":">=6.0.2",
+				"arsd-official:script":">=6.0.2",
+				"arsd-official:minigui":">=6.0.2",
+				"arsd-official:ttf":">=6.0.2",
+				"arsd-official:png":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:bmp":">=6.0.2"
 			}
 		},
 		{
@@ -54,11 +54,11 @@
 			"versions": ["arsd_te_conservative_draws"],
 			"sourceFiles": ["attach.d", "message.d", "detachable.d", "terminalemulator.d", "utility.d"],
 			"dependencies": {
-				"arsd-official:png":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:terminal":">=6.0.0",
-				"arsd-official:eventloop":">=6.0.0"
+				"arsd-official:png":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:terminal":">=6.0.2",
+				"arsd-official:eventloop":">=6.0.2"
 			}
 		},
 		{
@@ -72,16 +72,16 @@
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"sourceFiles": ["terminalemulator.d", "main.d"],
 			"dependencies": {
-				"arsd-official:simpledisplay":">=6.0.0",
-				"arsd-official:jsvar":">=6.0.0",
-				"arsd-official:script":">=6.0.0",
-				"arsd-official:minigui":">=6.0.0",
-				"arsd-official:ttf":">=6.0.0",
-				"arsd-official:png":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:libssh2_bindings":">=6.0.0",
-				"arsd-official:bmp":">=6.0.0"
+				"arsd-official:simpledisplay":">=6.0.2",
+				"arsd-official:jsvar":">=6.0.2",
+				"arsd-official:script":">=6.0.2",
+				"arsd-official:minigui":">=6.0.2",
+				"arsd-official:ttf":">=6.0.2",
+				"arsd-official:png":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:libssh2_bindings":">=6.0.2",
+				"arsd-official:bmp":">=6.0.2"
 			}
 		},
 		{
@@ -92,11 +92,11 @@
 			"versions": ["terminalextensions_commandline"],
 			"sourceFiles": ["utility.d", "terminalemulator.d"],
 			"dependencies": {
-				"arsd-official:terminal":">=6.0.0",
-				"arsd-official:color_base":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:png":">=6.0.0"
+				"arsd-official:terminal":">=6.0.2",
+				"arsd-official:color_base":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:png":">=6.0.2"
 			}
 		}
 	],
@@ -110,11 +110,11 @@
 			"sourceFiles": ["terminalemulator.d"],
 			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
 			"dependencies": {
-				"arsd-official:color_base":">=6.0.0",
-				"arsd-official:png":">=6.0.0",
-				"arsd-official:jpeg":">=6.0.0",
-				"arsd-official:svg":">=6.0.0",
-				"arsd-official:bmp":">=6.0.0"
+				"arsd-official:color_base":">=6.0.2",
+				"arsd-official:png":">=6.0.2",
+				"arsd-official:jpeg":">=6.0.2",
+				"arsd-official:svg":">=6.0.2",
+				"arsd-official:bmp":">=6.0.2"
 			}
 		}
 
