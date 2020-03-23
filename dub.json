@@ -98,7 +98,9 @@
 				"arsd-official:svg":">=6.0.0",
 				"arsd-official:png":">=6.0.0"
 			}
-		},
+		}
+	],
+	"subPackages": [
 		{
 			"name": "core",
 			"description": "The terminal emulation core as a library",
@@ -106,8 +108,13 @@
 			"importPaths": ["."],
 			"libs-posix": ["util"],
 			"sourceFiles": ["terminalemulator.d"],
+			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
 			"dependencies": {
-				"arsd-official:color_base":">=6.0.0"
+				"arsd-official:color_base":">=6.0.0",
+				"arsd-official:png":">=6.0.0",
+				"arsd-official:jpeg":">=6.0.0",
+				"arsd-official:svg":">=6.0.0",
+				"arsd-official:bmp":">=6.0.0"
 			}
 		}
 
