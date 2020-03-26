@@ -4084,9 +4084,8 @@ mixin template SdpyDraw() {
 					//import std.stdio; writeln(cast(void*) cell.nonCharacterData);
 					if(auto ncdi = cast(NonCharacterData_Image) cell.nonCharacterData) {
 						flushBuffer();
-						// FIXME this should probably just be the default color but meh
-						painter.outlineColor = Color.white;
-						painter.fillColor = Color.white;
+						painter.outlineColor = defaultBackground;
+						painter.fillColor = defaultBackground;
 						painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
 						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
 					}
