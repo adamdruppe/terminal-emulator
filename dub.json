@@ -12,9 +12,10 @@
 			"stringImportPaths": ["font"],
 			"libs-posix": ["util"],
 			"versions-windows": ["winpty"],
-			"sourceFiles": ["terminalemulator.d", "main.d"],
+			"sourceFiles": ["main.d"],
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"dependencies": {
+				"arsd-official:terminalemulator":">=6.0.2",
 				"arsd-official:simpledisplay":">=6.0.2",
 				"arsd-official:jsvar":">=6.0.2",
 				"arsd-official:script":">=6.0.2",
@@ -32,8 +33,9 @@
 			"targetType": "executable",
 			"importPaths": ["."],
 			"libs-posix": ["util"],
-			"sourceFiles": ["terminalemulator.d", "mactabs.d"],
+			"sourceFiles": ["mactabs.d"],
 			"dependencies": {
+				"arsd-official:terminalemulator":">=6.0.2",
 				"arsd-official:simpledisplay":">=6.0.2",
 				"arsd-official:jsvar":">=6.0.2",
 				"arsd-official:script":">=6.0.2",
@@ -52,8 +54,9 @@
 			"importPaths": ["."],
 			"libs-posix": ["util"],
 			"versions": ["arsd_te_conservative_draws"],
-			"sourceFiles": ["attach.d", "message.d", "detachable.d", "terminalemulator.d", "utility.d"],
+			"sourceFiles": ["attach.d", "message.d", "detachable.d", "utility.d"],
 			"dependencies": {
+				"arsd-official:terminalemulator":">=6.0.2",
 				"arsd-official:png":">=6.0.2",
 				"arsd-official:jpeg":">=6.0.2",
 				"arsd-official:svg":">=6.0.2",
@@ -70,8 +73,9 @@
 			"libs-posix": ["util"],
 			"versions": ["use_libssh2"],
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
-			"sourceFiles": ["terminalemulator.d", "main.d"],
+			"sourceFiles": ["main.d"],
 			"dependencies": {
+				"arsd-official:terminalemulator":">=6.0.2",
 				"arsd-official:simpledisplay":">=6.0.2",
 				"arsd-official:jsvar":">=6.0.2",
 				"arsd-official:script":">=6.0.2",
@@ -90,8 +94,9 @@
 			"targetType": "executable",
 			"importPaths": ["."],
 			"versions": ["terminalextensions_commandline"],
-			"sourceFiles": ["utility.d", "terminalemulator.d"],
+			"sourceFiles": ["utility.d"],
 			"dependencies": {
+				"arsd-official:terminalemulator":">=6.0.2",
 				"arsd-official:terminal":">=6.0.2",
 				"arsd-official:color_base":">=6.0.2",
 				"arsd-official:jpeg":">=6.0.2",
@@ -99,24 +104,5 @@
 				"arsd-official:png":">=6.0.2"
 			}
 		}
-	],
-	"subPackages": [
-		{
-			"name": "core",
-			"description": "The terminal emulation core as a library",
-			"targetType": "library",
-			"importPaths": ["."],
-			"libs-posix": ["util"],
-			"sourceFiles": ["terminalemulator.d"],
-			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
-			"dependencies": {
-				"arsd-official:color_base":">=6.0.2",
-				"arsd-official:png":">=6.0.2",
-				"arsd-official:jpeg":">=6.0.2",
-				"arsd-official:svg":">=6.0.2",
-				"arsd-official:bmp":">=6.0.2"
-			}
-		}
-
 	]
 }
