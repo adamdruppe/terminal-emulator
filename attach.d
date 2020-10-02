@@ -935,6 +935,8 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 	}
 
 	final switch(event.type) {
+		case InputEvent.Type.LinkEvent:
+		break;
 		case InputEvent.Type.EndOfFileEvent:
 			// assert(0);
 			// FIXME: is this right too?
