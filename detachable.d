@@ -1,3 +1,4 @@
+// FIXME: make sure fd's are closed on exec of the shell
 
 // dmd detachable.d message.d terminalemulator.d ~/arsd/terminal.d ~/arsd/color.d ~/arsd/eventloop.d -version=with_eventloop ~/d/dmd2/src/phobos/std/socket.d
 
@@ -422,6 +423,11 @@ class DetachableTerminalEmulator : TerminalEmulator {
 	bool connectionActive = false;
 
 	bool lastDrawAlternativeScreen;
+
+	override void requestRedraw() {
+		redraw();
+	}
+
 	// FIXME: a lot of code duplication between this and nestedterminalemulator
 	void redraw(bool forceRedraw = false) {
 		if(socket == -1 || !connectionActive)

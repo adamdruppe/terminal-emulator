@@ -1,3 +1,5 @@
+// FIXME: teh ttf font thing can be removed now realistically
+
 // FIXME: on Windows 8, the size event doesn't fire when you maximize the window
 
 // FIXME: use_libssh2 should do keepalive.
@@ -299,11 +301,12 @@ void main(string[] args) {
 		// 
 	}
 
-	try {
+	//try {
 		import std.process;
 		auto cmd = environment.get("SHELL", "/bin/bash");
 		startChild!startup(args.length > 2 ? args[2] : cmd, args.length > 2 ? args[2 .. $] : [cmd]);
-	} catch(Throwable t) {
+	//} catch(Throwable t) {
+	version(none) {
 		//import std.stdio;
 		//writeln(t.toString());
 		// we might not be run from a tty to print the message, so pop it up some other way.
@@ -699,10 +702,23 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 	bool focused;
 
+	/+
+		FIXME:
+			osc 1337 base64 image rom term2 lol.
+
+			image support in attach.
+
+			key the keyboard input controls more DRY
+	+/
+
+	override void requestRedraw() {
+		redraw();
+	}
+
 	this(int fontSize = 0) {
 		if(fontSize) {
-			this.usingTtf = true;
-			this.fontSize = fontSize;
+			//this.usingTtf = true;
+			//this.fontSize = fontSize;
 		} else version(Windows) {
 			if(GetSystemMetrics(SM_CYSCREEN) > 1024)
 				this.fontSize = 16;
@@ -712,7 +728,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			ttfFont = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
 			ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
-			loadDefaultFont();
+			if(fontSize) {
+				this.font = new OperatingSystemFont("Deja Vu Sans Mono", fontSize);
+				fontWidth = font.averageWidth;
+				fontHeight = font.height;
+			} else
+				loadDefaultFont();
 		}
 
 		auto desiredWidth = 80;
@@ -744,8 +765,6 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		};
 
 		super(desiredWidth, desiredHeight);
-
-		bool skipNextChar = false;
 
 		window.setEventHandlers(
 		delegate(MouseEvent ev) {
@@ -800,120 +819,27 @@ class TerminalEmulatorWindow : TerminalEmulator {
 
 			// end debug stuff
 
-
-			// special keys
-
-			string magic() {
-				string code;
-				foreach(member; __traits(allMembers, TerminalKey))
-					if(member != "Escape")
-						code ~= "case Key." ~ member ~ ": if(sendKeyToApplication(TerminalKey." ~ member ~ "
-							, (ev.modifierState & ModifierState.shift)?true:false
-							, (ev.modifierState & ModifierState.alt)?true:false
-							, (ev.modifierState & ModifierState.ctrl)?true:false
-							, (ev.modifierState & ModifierState.windows)?true:false
-						)) redraw(); break;";
-				return code;
-			}
-
-
-			switch(ev.key) {
-				//// I want the escape key to send twice to differentiate it from
-				//// other escape sequences easily.
-				//case Key.Escape: sendToApplication("\033"); break;
-
-				case Key.V:
-				case Key.C:
-					if((ev.modifierState & ModifierState.shift) && (ev.modifierState & ModifierState.ctrl)) {
-						skipNextChar = true;
-						if(ev.key == Key.V)
-							pasteFromClipboard(&sendPasteData);
-						else if(ev.key == Key.C)
-							copyToClipboard(getSelectedText());
-						/+
-						if(sendKeyToApplication(
-							TerminalKey.Insert,
-							ev.key == Key.V, // shift+insert pastes...
-							false,
-							ev.key == Key.C, // ctrl+insert copies...
-							false
-						)) redraw();
-						+/
-					}
-				break;
-
-				// expansion of my own for like shift+enter to terminal.d users
-				case Key.Enter:
-				case Key.Backspace:
-				case Key.Tab:
-					if(ev.modifierState & (ModifierState.shift | ModifierState.alt | ModifierState.ctrl)) {
-						skipNextChar = true;
-						if(sendKeyToApplication(
-							cast(TerminalKey) (
-								ev.key == Key.Enter ? '\n' :
-								ev.key == Key.Tab ? '\t' :
-								ev.key == Key.Backspace ? '\b' :
-									0 /* assert(0) */
-							)
-							, (ev.modifierState & ModifierState.shift)?true:false
-							, (ev.modifierState & ModifierState.alt)?true:false
-							, (ev.modifierState & ModifierState.ctrl)?true:false
-							, (ev.modifierState & ModifierState.windows)?true:false
-						)) redraw();
-					}
-				break;
-
-				mixin(magic());
-
-				default:
-					// keep going, not special
-			}
-
-			// remapping of alt+key is possible too, at least on linux.
-			static if(UsingSimpledisplayX11) {
-				if(ev.modifierState & ModifierState.alt) {
-					//import std.stdio;
-					if(ev.key in altMappings) {
-						sendToApplication(altMappings[ev.key]);
-						//skipNextChar = true;
-					}
-					else {
-						char[4] str;
-						import std.utf;
-						auto data = str[0 .. encode(str, cast(dchar) ev.key)];
-						char[5] f;
-						f[0] = '\033';
-						f[1 .. 1 + data.length] = data[];
-						sendToApplication(f[0 .. 1 + data.length]);
-					}
-				}
-			}
-
 			static if(UsingSimpledisplayX11)
 				if(ev.modifierState & ModifierState.windows) {
 					if(ev.key in superMappings) {
 						sendToApplication(superMappings[ev.key]);
 						//skipNextChar = true;
+						return;
 					}
 			}
+
+			defaultKeyHandler!Key(
+				ev.key,
+				(ev.modifierState & ModifierState.shift)?true:false,
+				(ev.modifierState & ModifierState.alt)?true:false,
+				(ev.modifierState & ModifierState.ctrl)?true:false,
+				(ev.modifierState & ModifierState.windows)?true:false
+			);
 
 			return; // the character event handler will do others
 		},
 		(dchar c) {
-			if(skipNextChar) {
-				skipNextChar = false;
-				return;
-			}
-
-			endScrollback();
-			char[4] str;
-			import std.utf;
-			if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
-			auto data = str[0 .. encode(str, c)];
-
-			// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
-			if(c != 127)
-				sendToApplication(data);
+			defaultCharHandler(c);
 		});
 
 		version(use_libssh2) {

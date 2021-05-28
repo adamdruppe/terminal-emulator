@@ -1,5 +1,7 @@
 // FIXME: catch the suspend signal (ctrl+z) and forward it inside
 // FIXME: i should be able to change the title from the outside too
+//
+// FIXME:some condition can make it spin 100% cpu and allocate a bunch of memory and idk what.
 /++
 	This is a GNU Screen style program to multiplex and provide remote attach/detach
 	support to a terminal emulator backend.
@@ -945,11 +947,12 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 		case InputEvent.Type.HangupEvent:
 			running = false;
 		break;
-		case InputEvent.Type.KeyboardEvent:
-			break; // FIXME: KeyboardEvent replaces CharacterEvent and NonCharacterKeyEvent
 		case InputEvent.Type.CharacterEvent:
-			auto ce = event.get!(InputEvent.Type.CharacterEvent);
-			if(ce.eventType == CharacterEvent.Type.Released)
+		case InputEvent.Type.NonCharacterKeyEvent:
+			break; // ignore deprecated things
+		case InputEvent.Type.KeyboardEvent:
+			auto ce = event.get!(InputEvent.Type.KeyboardEvent);
+			if(!ce.pressed)
 				return;
 
 			if(escaping) {
@@ -1021,16 +1024,60 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 						}
 						setActiveScreen(terminal, session, num);
 					break;
+					case KeyboardEvent.Key.LeftArrow:
+						if(ce.modifierState & ModifierState.alt) {
+							// alt + arrow will move the tab
+							if(session.activeScreen) {
+								auto c = session.children[session.activeScreen - 1];
+								session.children[session.activeScreen - 1] = session.children[session.activeScreen];
+								session.children[session.activeScreen] = c;
+
+								session.activeScreen--;
+							}
+							drawTaskbar(terminal, session);
+						} else
+							setActiveScreen(terminal, session, nextScreenBackwards(session));
+					return;
+					case KeyboardEvent.Key.RightArrow:
+						if(ce.modifierState & ModifierState.alt) {
+							// alt + arrow will move the tab
+							if(session.activeScreen + 1 < session.children.length) {
+								auto c = session.children[session.activeScreen + 1];
+								session.children[session.activeScreen + 1] = session.children[session.activeScreen];
+								session.children[session.activeScreen] = c;
+
+								session.activeScreen++;
+							}
+							drawTaskbar(terminal, session);
+						} else
+							setActiveScreen(terminal, session, nextScreen(session));
+					return;
+
 					default:
 				}
 				escaping = false;
 			} else if(ce.character == session.escapeCharacter) {
 				escaping = true;
 			} else {
-				im.type = InputMessage.Type.CharacterPressed;
-				im.eventLength = im.characterEvent.offsetof + im.CharacterEvent.sizeof;
-				im.characterEvent.character = ce.character;
-				eventToSend = &im;
+				if(ce.key < KeyboardEvent.Key.min) {
+					if(ce.modifierStateFiltered & (ModifierState.control | ModifierState.shift | ModifierState.alt))
+						goto modded;
+
+					im.type = InputMessage.Type.CharacterPressed;
+					im.characterEvent.character = ce.key;
+					eventToSend = &im;
+				} else {
+					modded:
+					im.keyEvent.key = cast(int) ce.key; // this can be casted to a TerminalKey later
+					im.keyEvent.modifiers = 0;
+					if(ce.modifierState & ModifierState.shift)
+						im.keyEvent.modifiers |= InputMessage.Shift;
+					if(ce.modifierState & ModifierState.control)
+						im.keyEvent.modifiers |= InputMessage.Ctrl;
+					if((ce.modifierState & ModifierState.alt) || (ce.modifierState & ModifierState.meta))
+						im.keyEvent.modifiers |= InputMessage.Alt;
+					eventToSend = &im;
+				}
 			}
 		break;
 		case InputEvent.Type.SizeChangedEvent:
@@ -1047,60 +1094,6 @@ void handleEvent(Terminal* terminal, ref Session session, InputEvent event, Sock
 			im.type = InputMessage.Type.CharacterPressed;
 			im.characterEvent.character = '\003';
 			eventToSend = &im;
-		break;
-		case InputEvent.Type.NonCharacterKeyEvent:
-			auto ev = event.get!(InputEvent.Type.NonCharacterKeyEvent);
-			if(ev.eventType == NonCharacterKeyEvent.Type.Pressed) {
-
-				if(escaping) {
-					switch(ev.key) {
-						case NonCharacterKeyEvent.Key.LeftArrow:
-							if(ev.modifierState & ModifierState.alt) {
-								// alt + arrow will move the tab
-								if(session.activeScreen) {
-									auto c = session.children[session.activeScreen - 1];
-									session.children[session.activeScreen - 1] = session.children[session.activeScreen];
-									session.children[session.activeScreen] = c;
-
-									session.activeScreen--;
-								}
-								drawTaskbar(terminal, session);
-							} else
-								setActiveScreen(terminal, session, nextScreenBackwards(session));
-						break;
-						case NonCharacterKeyEvent.Key.RightArrow:
-							if(ev.modifierState & ModifierState.alt) {
-								// alt + arrow will move the tab
-								if(session.activeScreen + 1 < session.children.length) {
-									auto c = session.children[session.activeScreen + 1];
-									session.children[session.activeScreen + 1] = session.children[session.activeScreen];
-									session.children[session.activeScreen] = c;
-
-									session.activeScreen++;
-								}
-								drawTaskbar(terminal, session);
-							} else
-								setActiveScreen(terminal, session, nextScreen(session));
-						break;
-						default:
-					}
-					//escaping = false;
-					// staying in escape mode so you can cycle with arrows more easily. hit enter to go back to normal mode
-					return;
-				}
-
-				im.type = InputMessage.Type.KeyPressed;
-
-				im.keyEvent.key = cast(int) ev.key; // this can be casted to a TerminalKey later
-				im.keyEvent.modifiers = 0;
-				if(ev.modifierState & ModifierState.shift)
-					im.keyEvent.modifiers |= InputMessage.Shift;
-				if(ev.modifierState & ModifierState.control)
-					im.keyEvent.modifiers |= InputMessage.Ctrl;
-				if((ev.modifierState & ModifierState.alt) || (ev.modifierState & ModifierState.meta))
-					im.keyEvent.modifiers |= InputMessage.Alt;
-				eventToSend = &im;
-			}
 		break;
 		case InputEvent.Type.PasteEvent:
 			auto ev = event.get!(InputEvent.Type.PasteEvent);

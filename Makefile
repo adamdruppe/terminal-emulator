@@ -11,9 +11,9 @@ main:
 mactabs:
 	dmd mactabs.d $(ARSD)/terminalemulator.d -L-lutil $(ARSD)/simpledisplay.d $(ARSD)/color.d $(ARSD)/jsvar.d $(ARSD)/script.d $(ARSD)/minigui.d -debug -g $(ARSD)/ttf.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d $(ARSD)/jpeg.d $(ARSD)/svg.d -m64 # -version=use_libssh2 $(ARSD)/libssh2.d -ofsshmain
 main.exe:
-	dmdw main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d $(ARSD)/terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 -version=use_libssh2 $(ARSD)/jpeg.d $(ARSD)/svg.d $(ARSD)/libssh2.d $(ARSD)/libssh2.lib $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d
+	dmdw main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d $(ARSD)/terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 -m32 -version=use_libssh2 $(ARSD)/jpeg.d $(ARSD)/svg.d $(ARSD)/libssh2.d $(ARSD)/libssh2.lib $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d
 winpty.exe:
-	dmdw -ofwinpty.exe main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d $(ARSD)/terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/jpeg.d $(ARSD)/svg.d $(ARSD)/bmp.d -L/SUBSYSTEM:WINDOWS:5.0 $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d -version=winpty -g
+	dmdw -ofwinpty.exe main.d $(ARSD)/simpledisplay.d $(ARSD)/color.d -debug $(ARSD)/ttf.d $(ARSD)/terminalemulator.d -J$(ARSD) $(ARSD)/png.d $(ARSD)/jpeg.d $(ARSD)/svg.d $(ARSD)/bmp.d -m32 -L/SUBSYSTEM:WINDOWS:5.0 $(ARSD)/minigui.d $(ARSD)/jsvar.d $(ARSD)/script.d -version=winpty -g
 attach:
 	dmd -m64 attach message.d $(ARSD)/terminal detachable.d $(ARSD)/terminalemulator.d $(ARSD)/color.d $(ARSD)/eventloop.d -version=with_eventloop -debug -g utility.d $(ARSD)/png.d $(ARSD)/jpeg.d $(ARSD)/svg.d -version=arsd_te_conservative_draws
 detachable:
