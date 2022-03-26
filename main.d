@@ -725,13 +725,18 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		}
 
 		if(usingTtf) {
-			ttfFont = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
+			assert(0, " no longer implemented ");
+			//ttfFont = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
 			ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
 			if(fontSize) {
 				this.font = new OperatingSystemFont("Deja Vu Sans Mono", fontSize);
-				fontWidth = font.averageWidth;
-				fontHeight = font.height;
+				if(this.font.isNull || !this.font.isMonospace) {
+					loadDefaultFont();
+				} else {
+					fontWidth = font.averageWidth;
+					fontHeight = font.height;
+				}
 			} else
 				loadDefaultFont();
 		}
