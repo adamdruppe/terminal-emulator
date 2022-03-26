@@ -198,7 +198,7 @@ void main(string[] args) {
 		} else version(Windows) {
 			if(WSAAsyncSelect(socket.handle, term.window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))
 				throw new Exception("WSAAsyncSelect");
-			term.window.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+			term.window.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, out int mustReturn) {
 				if(hwnd !is term.window.impl.hwnd)
 					return 1; // we don't care...
 				switch(msg) {
