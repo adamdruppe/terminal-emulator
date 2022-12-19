@@ -15,16 +15,16 @@
 			"sourceFiles": ["main.d"],
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"dependencies": {
-				"arsd-official:terminalemulator":">=7.0.0",
-				"arsd-official:simpledisplay":">=7.0.0",
-				"arsd-official:jsvar":">=7.0.0",
-				"arsd-official:script":">=7.0.0",
-				"arsd-official:minigui":">=7.0.0",
-				"arsd-official:ttf":">=7.0.0",
-				"arsd-official:png":">=7.0.0",
-				"arsd-official:jpeg":">=7.0.0",
-				"arsd-official:svg":">=7.0.0",
-				"arsd-official:bmp":">=7.0.0"
+				"arsd-official:terminalemulator":">=10.9.8",
+				"arsd-official:simpledisplay":">=10.9.8",
+				"arsd-official:jsvar":">=10.9.8",
+				"arsd-official:script":">=10.9.8",
+				"arsd-official:minigui":">=10.9.8",
+				"arsd-official:ttf":">=10.9.8",
+				"arsd-official:png":">=10.9.8",
+				"arsd-official:jpeg":">=10.9.8",
+				"arsd-official:svg":">=10.9.8",
+				"arsd-official:bmp":">=10.9.8"
 			}
 		},
 		{
@@ -35,16 +35,16 @@
 			"libs-posix": ["util"],
 			"sourceFiles": ["mactabs.d"],
 			"dependencies": {
-				"arsd-official:terminalemulator":">=7.0.0",
-				"arsd-official:simpledisplay":">=7.0.0",
-				"arsd-official:jsvar":">=7.0.0",
-				"arsd-official:script":">=7.0.0",
-				"arsd-official:minigui":">=7.0.0",
-				"arsd-official:ttf":">=7.0.0",
-				"arsd-official:png":">=7.0.0",
-				"arsd-official:jpeg":">=7.0.0",
-				"arsd-official:svg":">=7.0.0",
-				"arsd-official:bmp":">=7.0.0"
+				"arsd-official:terminalemulator":">=10.9.8",
+				"arsd-official:simpledisplay":">=10.9.8",
+				"arsd-official:jsvar":">=10.9.8",
+				"arsd-official:script":">=10.9.8",
+				"arsd-official:minigui":">=10.9.8",
+				"arsd-official:ttf":">=10.9.8",
+				"arsd-official:png":">=10.9.8",
+				"arsd-official:jpeg":">=10.9.8",
+				"arsd-official:svg":">=10.9.8",
+				"arsd-official:bmp":">=10.9.8"
 			}
 		},
 		{
@@ -56,12 +56,12 @@
 			"versions": ["arsd_te_conservative_draws"],
 			"sourceFiles": ["attach.d", "message.d", "detachable.d", "utility.d"],
 			"dependencies": {
-				"arsd-official:terminalemulator":">=7.0.0",
-				"arsd-official:png":">=7.0.0",
-				"arsd-official:jpeg":">=7.0.0",
-				"arsd-official:svg":">=7.0.0",
-				"arsd-official:terminal":">=7.0.0",
-				"arsd-official:eventloop":">=7.0.0"
+				"arsd-official:terminalemulator":">=10.9.8",
+				"arsd-official:png":">=10.9.8",
+				"arsd-official:jpeg":">=10.9.8",
+				"arsd-official:svg":">=10.9.8",
+				"arsd-official:terminal":">=10.9.8",
+				"arsd-official:eventloop":">=10.9.8"
 			}
 		},
 		{
@@ -75,17 +75,17 @@
 			"dFlags-windows": ["-L/SUBSYSTEM:WINDOWS:5.0"],
 			"sourceFiles": ["main.d"],
 			"dependencies": {
-				"arsd-official:terminalemulator":">=7.0.0",
-				"arsd-official:simpledisplay":">=7.0.0",
-				"arsd-official:jsvar":">=7.0.0",
-				"arsd-official:script":">=7.0.0",
-				"arsd-official:minigui":">=7.0.0",
-				"arsd-official:ttf":">=7.0.0",
-				"arsd-official:png":">=7.0.0",
-				"arsd-official:jpeg":">=7.0.0",
-				"arsd-official:svg":">=7.0.0",
-				"arsd-official:libssh2_bindings":">=7.0.0",
-				"arsd-official:bmp":">=7.0.0"
+				"arsd-official:terminalemulator":">=10.9.8",
+				"arsd-official:simpledisplay":">=10.9.8",
+				"arsd-official:jsvar":">=10.9.8",
+				"arsd-official:script":">=10.9.8",
+				"arsd-official:minigui":">=10.9.8",
+				"arsd-official:ttf":">=10.9.8",
+				"arsd-official:png":">=10.9.8",
+				"arsd-official:jpeg":">=10.9.8",
+				"arsd-official:svg":">=10.9.8",
+				"arsd-official:libssh2_bindings":">=10.9.8",
+				"arsd-official:bmp":">=10.9.8"
 			}
 		},
 		{
@@ -96,12 +96,12 @@
 			"versions": ["terminalextensions_commandline"],
 			"sourceFiles": ["utility.d"],
 			"dependencies": {
-				"arsd-official:terminalemulator":">=7.0.0",
-				"arsd-official:terminal":">=7.0.0",
-				"arsd-official:color_base":">=7.0.0",
-				"arsd-official:jpeg":">=7.0.0",
-				"arsd-official:svg":">=7.0.0",
-				"arsd-official:png":">=7.0.0"
+				"arsd-official:terminalemulator":">=10.9.8",
+				"arsd-official:terminal":">=10.9.8",
+				"arsd-official:color_base":">=10.9.8",
+				"arsd-official:jpeg":">=10.9.8",
+				"arsd-official:svg":">=10.9.8",
+				"arsd-official:png":">=10.9.8"
 			}
 		}
 	]
