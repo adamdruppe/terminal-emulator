@@ -329,6 +329,8 @@ struct XImagePainter {
 	TtfFont* ttfFont;
 	int fontWidth;
 
+	void notifyCursorPosition(int, int, int, int) {}
+
 	immutable {
 		int nextLineAdjustment;
 		int offR;
@@ -730,7 +732,12 @@ class TerminalEmulatorWindow : TerminalEmulator {
 			ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
 			if(fontSize) {
-				this.font = new OperatingSystemFont("Deja Vu Sans Mono", fontSize);
+				version(Windows) {
+					this.font = new OperatingSystemFont("Consolas", fontSize);
+					if(this.font.isNull)
+						this.font = new OperatingSystemFont("Courier New", fontSize);
+				} else
+					this.font = new OperatingSystemFont("Deja Vu Sans Mono", fontSize);
 				if(this.font.isNull || !this.font.isMonospace) {
 					loadDefaultFont();
 				} else {
