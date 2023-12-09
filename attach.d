@@ -664,6 +664,9 @@ Socket connectTo(ref string sname, in bool spawn = true) {
 			dup2(n, 0);
 			dup2(n2, 1);
 
+			close(n);
+			close(n2);
+
 			// also detach from the calling foreground process group
 			// because otherwise SIGINT will be sent to this too and kill
 			// it instead of just going to the parent and being translated

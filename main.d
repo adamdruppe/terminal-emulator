@@ -729,7 +729,7 @@ class TerminalEmulatorWindow : TerminalEmulator {
 		if(usingTtf) {
 			assert(0, " no longer implemented ");
 			//ttfFont = TtfFont(cast(ubyte[]) import("monospace-2.ttf"));
-			ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
+			// ttfFont.getStringSize("M", fontSize, fontWidth, fontHeight);
 		} else {
 			if(fontSize) {
 				version(Windows) {
