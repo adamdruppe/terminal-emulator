@@ -341,12 +341,12 @@ struct XImagePainter {
 	ubyte* data;
 	ubyte* ending;
 
-	ubyte[] getThing(int x, int y) {
+	ubyte[] getThing(int x, int y) @system {
 		auto d = data + y * nextLineAdjustment + x * bpp;
 		return d[0 .. ending - d];
 	}
 
-	this(Image i, TtfFont* ttfFont, int fontWidth) {
+	this(Image i, TtfFont* ttfFont, int fontWidth) @system {
 		this.img = i;
 		this.ttfFont = ttfFont;
 		this.fontWidth = fontWidth;
@@ -361,7 +361,7 @@ struct XImagePainter {
 		 ending = img.getDataPointer() + img.height * img.bytesPerLine();
 	}
 
-	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage, int w, int h) {
+	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage, int w, int h) @system {
 		auto destPtr = data + upperLeft.y * nextLineAdjustment + upperLeft.x * bpp;
 
 		if(w > i.width)
@@ -741,8 +741,8 @@ class TerminalEmulatorWindow : TerminalEmulator {
 				if(this.font.isNull || !this.font.isMonospace) {
 					loadDefaultFont();
 				} else {
-					fontWidth = font.averageWidth;
-					fontHeight = font.height;
+					fontWidth = castFnumToCnum(font.averageWidth);
+					fontHeight = castFnumToCnum(font.height);
 				}
 			} else
 				loadDefaultFont();

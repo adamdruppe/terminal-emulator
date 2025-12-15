@@ -175,6 +175,8 @@ struct ChildTerminal {
 	Socket socket;
 	string title;
 
+	bool protocolV2;
+
 	string socketName;
 	// tab image
 
@@ -327,7 +329,7 @@ void main(string[] args) {
 
 	foreach(idx, sname; session.screens) {
 		if(sname == "[vacant]") {
-			session.children ~= ChildTerminal(null, sname, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
+			session.children ~= ChildTerminal(null, sname, false, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
 			continue;
 		}
 		auto socket = connectTo(sname);
@@ -337,7 +339,7 @@ void main(string[] args) {
 			good = true;
 			sendSimpleMessage(socket, InputMessage.Type.Attach);
 		}
-		session.children ~= ChildTerminal(socket, sname, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
+		session.children ~= ChildTerminal(socket, sname, false, sname, idx < session.screensTitlePrefixes.length ? session.screensTitlePrefixes[idx] : null);
 
 		// we should scan inactive sockets for:
 		// 1) a bell
@@ -348,7 +350,7 @@ void main(string[] args) {
 	}
 
 	if(session.children.length == 0)
-		session.children ~= ChildTerminal(null, null, null, null);
+		session.children ~= ChildTerminal(null, null, false, null, null);
 
 	assert(session.children.length);
 
@@ -412,6 +414,8 @@ void main(string[] args) {
 		changeWindowIcon(&terminal, session.icon);
 	}
 
+	auto reusableBuffer = new ubyte[](1024 * 64);
+
 	while(running) {
 		if(stopRequested) {
 			stopRequested = false;
@@ -424,7 +428,7 @@ void main(string[] args) {
 		}
 
 		terminal.flush();
-		ubyte[4096] buffer;
+		ubyte[] buffer = reusableBuffer[];
 		fd_set rdfs;
 		FD_ZERO(&rdfs);
 
@@ -464,7 +468,8 @@ void main(string[] args) {
 			foreach(ref child; session.children) if(child.socket !is null) {
 				if(FD_ISSET(child.socket.handle, &rdfs)) {
 					// data from the pty should be forwarded straight out
-					auto len = read(child.socket.handle, buffer.ptr, cast(int) 2);
+					buffer = reusableBuffer[];
+					auto len = read(child.socket.handle, buffer.ptr, cast(int) buffer.length);
 					if(len <= 0) {
 						// probably end of file or something cuz the child exited
 						// we should switch to the next possible screen
@@ -474,114 +479,111 @@ void main(string[] args) {
 						continue;
 					}
 
-					assert(len == 2); // should be a frame
-					// unpack the frame
-					OutputMessageType messageType = cast(OutputMessageType) buffer[0];
-					ubyte messageLength = buffer[1];
-					if(messageLength) {
-						// unpack the message
-						int where = 0;
-						while(where < messageLength) {
-							len = read(child.socket.handle, buffer.ptr + where, messageLength - where);
-							if(len <= 0) assert(0);
-							where += len;
+					buffer = buffer[0 .. len];
+					//static import std.stdio;std.stdio.stderr.writeln(buffer);
+
+					while(buffer.length) {// >= 3) {
+						// unpack the frame
+						OutputMessageType messageType = cast(OutputMessageType) buffer[0];
+						ushort messageLength = buffer[1];
+						if(child.protocolV2) {
+							messageLength |= (buffer[2] << 8);
+							buffer = buffer[3 .. $];
+						} else {
+							buffer = buffer[2 .. $];
 						}
-						assert(where == messageLength);
-					}
+						if(buffer.length < messageLength) {
+							import core.stdc.string;
+							memmove(reusableBuffer.ptr, buffer.ptr, buffer.length);
 
+							auto len2 = read(child.socket.handle, reusableBuffer.ptr + buffer.length, reusableBuffer.length - buffer.length);
+							if(len2 <= 0)
+								assert(0);
+							buffer = reusableBuffer[0 .. buffer.length + len2];
+						}
+						auto message = buffer[0 .. messageLength];
+						buffer = buffer[messageLength .. $];
 
-					void handleDataFromTerminal() {
-						/* read just for stuff in the background like bell or title change */
-						int lastEsc = -1;
-						int cut1 = 0, cut2 = 0;
-						foreach(bidx, b; buffer[0 .. messageLength]) {
-							if(b == '\033')
-								lastEsc = cast(int) bidx;
+						void handleDataFromTerminal(ubyte[] data) {
+							/* read just for stuff in the background like bell or title change */
+							int lastEsc = -1;
+							foreach(bidx, b; data) {
+								if(b == '\033')
+									lastEsc = cast(int) bidx;
 
-							if(b == '\007') {
-								if(lastEsc != -1) {
-									auto pieces = cast(char[]) buffer[lastEsc .. bidx];
-									cut1 = lastEsc;
-									cut2 = 0;
-									lastEsc = -1;
+								if(b == '\007') {
+									if(lastEsc != -1) {
+										auto pieces = cast(char[]) data[lastEsc .. bidx];
+										lastEsc = -1;
 
-									// anything longer is just unreasonable
-									if(pieces.length > 4 && pieces.length < 120)
-									if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
-										child.title = pieces[4 .. $].idup;
+										// anything longer is just unreasonable
+										if(pieces.length > 4 && pieces.length < 120)
+										if(pieces[1] == ']' && pieces[2] == '0' && pieces[3] == ';') {
+											child.title = pieces[4 .. $].idup;
+											redrawTaskbar = true;
+										}
+									}
+									if(child.socket !is socket) {
+										child.demandsAttention = true;
 										redrawTaskbar = true;
-
-										cut2 = cast(int) bidx;
 									}
 								}
-								if(child.socket !is socket) {
-									child.demandsAttention = true;
-									redrawTaskbar = true;
-								}
 							}
-						}
 
-						// activity on the active screen needs to be forwarded
-						// to the actual terminal so the user can see it too
-						if(!outputPaused && child.socket is socket) {
-							void writeOut(ubyte[] toWrite) {
-								int len = cast(int) toWrite.length;
-								while(len > 0) {
-									if(!debugMode) {
-										auto wrote = write(1, toWrite.ptr, len);
+							// activity on the active screen needs to be forwarded
+							// to the actual terminal so the user can see it too
+							if(!outputPaused && child.socket is socket) {
+								void writeOut(ubyte[] toWrite) {
+									while(toWrite.length > 0) {
+										auto wrote = write(1, toWrite.ptr, toWrite.length);
 										if(wrote <= 0)
 											throw new Exception("write");
 										toWrite = toWrite[wrote .. $];
-										len -= wrote;
-									} else {import std.stdio; writeln(to!string(buffer[0..len])); len = 0;}
+									}
 								}
+
+								writeOut(data);
+								//writeOut(cast(ubyte[]) "Received\n");
 							}
 
-							// FIXME
-							if(false && cut2 > cut1) {
-								// cut1 .. cut2 should be sliced out of the final output
-								// a title change isn't necessarily desirable directly since
-								// we do it in the session
-								writeOut(buffer[0 .. cut1]);
-								writeOut(buffer[cut2 + 1 .. messageLength]);
-							} else {
-								writeOut(buffer[0 .. messageLength]);
+							/+
+							/* there's still new activity here */
+							if(child.lastWasSilent && child.lastActivity) {
+								child.demandsAttention = true;
+								redrawTaskbar = true;
+								child.lastWasSilent = false;
 							}
+							child.lastActivity = time(null);
+							+/
 						}
 
-						/+
-						/* there's still new activity here */
-						if(child.lastWasSilent && child.lastActivity) {
-							child.demandsAttention = true;
-							redrawTaskbar = true;
-							child.lastWasSilent = false;
+						final switch(messageType) {
+							case OutputMessageType.NULL:
+								// should never happen
+								assert(0);
+							//break;
+							case OutputMessageType.dataFromTerminal:
+								handleDataFromTerminal(message);
+							break;
+							case OutputMessageType.remoteDetached:
+								// FIXME: this should be done on a session level
+
+								// but the idea is if one is remote detached, they all are,
+								// so we should just terminate immediately as to not write a new file
+								return;
+							//break;
+							case OutputMessageType.mouseTrackingOn:
+								session.mouseTrackingOn = true;
+							break;
+							case OutputMessageType.mouseTrackingOff:
+								session.mouseTrackingOn = false;
+							break;
+							case OutputMessageType.enableProtocolV2:
+								child.protocolV2 = true;
+							break;
 						}
-						child.lastActivity = time(null);
-						+/
 					}
-
-					final switch(messageType) {
-						case OutputMessageType.NULL:
-							// should never happen
-							assert(0);
-						//break;
-						case OutputMessageType.dataFromTerminal:
-							handleDataFromTerminal();
-						break;
-						case OutputMessageType.remoteDetached:
-							// FIXME: this should be done on a session level
-
-							// but the idea is if one is remote detached, they all are,
-							// so we should just terminate immediately as to not write a new file
-							return;
-						//break;
-						case OutputMessageType.mouseTrackingOn:
-							session.mouseTrackingOn = true;
-						break;
-						case OutputMessageType.mouseTrackingOff:
-							session.mouseTrackingOn = false;
-						break;
-					}
+					assert(buffer.length == 0);
 				} else {
 					/+
 					/* there was not any new activity, see if it has become silent */
@@ -733,7 +735,7 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 		}
 
 		int spaceRemaining = terminal.width;
-		terminal.moveTo(0, terminal.height - 1);
+		terminal.moveTo(0, terminal.height - 1, ForceOption.alwaysSend);
 		//terminal.writeStringRaw("\033[K"); // clear line
 		terminal.color(Color.blue, Color.white, ForceOption.alwaysSend, true);
 		terminal.write("  "); //"+ ");
@@ -777,6 +779,8 @@ void drawTaskbar(Terminal* terminal, ref Session session) {
 		foreach(i; 0 .. spaceRemaining)
 			terminal.write(" ");
 		terminal.write(" ");//"X");
+
+		terminal.color(Color.DEFAULT, Color.DEFAULT, ForceOption.automatic);
 	}
 
 	if(anyDemandAttention) {
@@ -836,7 +840,7 @@ void attach(Terminal* terminal, ref Session session, string sname) {
 	if(newSocket) {
 		sendSimpleMessage(newSocket, InputMessage.Type.Attach);
 
-		session.children[position] = ChildTerminal(newSocket, sname, sname);
+		session.children[position] = ChildTerminal(newSocket, sname, false, sname);
 		setActiveScreen(terminal, session, position);
 
 		if(session.autoCommand.length)

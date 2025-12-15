@@ -138,23 +138,27 @@ class DetachableTerminalEmulator : TerminalEmulator {
 			if(data.length)
 				while(data.length) {
 					auto sending = data;
-					if(sending.length > 255) {
-						sending = sending[0 .. 255];
+					if(sending.length > 64_000) {
+						sending = sending[0 .. 64_000];
 					}
 
 					data = data[sending.length .. $];
 
-					ubyte[260] frame;
+					static __gshared ubyte[] reusableBuffer;
+					if(reusableBuffer is null)
+						reusableBuffer = new ubyte[](1024 * 64);
+					ubyte[] frame = reusableBuffer[];
 					frame[0] = type;
-					assert(sending.length <= 255);
-					frame[1] = cast(ubyte) sending.length;
-					frame[2 .. 2 + sending.length] = cast(ubyte[]) sending[];
+					assert(sending.length <= 64_000);
+					frame[1] = sending.length & 0xff;
+					frame[2] = (sending.length >> 8) & 0xff;
+					frame[3 .. 3 + sending.length] = cast(ubyte[]) sending[];
 
-					auto mustSend = frame[0 .. 2 + sending.length];
+					auto mustSend = frame[0 .. 3 + sending.length];
 						
 					int tries = 4000;
 					try_again:
-					auto sent = psock.send(socket, frame.ptr, 2 + sending.length, 0);
+					auto sent = psock.send(socket, mustSend.ptr, mustSend.length, 0);
 					if(sent < 0 && (.errno == EAGAIN || .errno == EWOULDBLOCK)) {
 						import core.thread;
 						Thread.sleep(1.msecs);
@@ -166,7 +170,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 							return;
 						}
 					}
-					if(sent != 2 + sending.length) {
+					if(sent != mustSend.length) {
 						//, lastSocketError());
 						socket = -1;
 						return;
@@ -185,10 +189,11 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					*/
 				}
 			else {
-				ubyte[2] frame;
+				ubyte[3] frame;
 				frame[0] = type;
 				frame[1] = 0;
-				psock.send(socket, frame.ptr, 2, 0);
+				frame[2] = 0;
+				psock.send(socket, frame.ptr, 3, 0);
 				/*
 				again:
 				if(socket.send(frame) <= 0)
@@ -215,9 +220,15 @@ class DetachableTerminalEmulator : TerminalEmulator {
 	void acceptConnection() {
 		assert(listeningSocket !is null);
 
-		import std.stdio; writeln("accept");
+		// import std.stdio; writeln("accept");
 
 		auto socket = listeningSocket.accept();
+
+		// the 16 bit length makes a huge performance difference, want to enable it immediately
+		ubyte[2] enableV2 = 0;
+		enableV2[0] = OutputMessageType.enableProtocolV2;
+		socket.send(enableV2[]);
+
 		socket.blocking = false; // blocking is bad with the event loop, cuz it is edge triggered
 		addFileEventListeners(cast(int) socket.handle, &socketReady, null, null);
 
@@ -441,7 +452,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 		import std.process;
 		environment["TERM"] = "xterm";
 		static import terminal_module = arsd.terminal;
-		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, -1, null /* FIXME? */);
+		auto terminal = terminal_module.Terminal(terminal_module.ConsoleOutputType.minimalProcessing, -1, -1, () => [this.screenWidth, this.screenHeight] /* FIXME? */);
 		terminal._writeDelegate = &writer;
 		terminal._wrapAround = false;
 
@@ -484,7 +495,6 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					auto stride = encode(str, cell.ch);
 
 					terminal.moveTo(x, y, isFirst ? terminal_module.ForceOption.alwaysSend : terminal_module.ForceOption.automatic);
-					isFirst = false;
 
 					bool reverse = cell.attributes.inverse != reverseVideo; /* != == ^ btw */
 					if(cell.selected)
@@ -513,6 +523,7 @@ class DetachableTerminalEmulator : TerminalEmulator {
 					terminal.underline = cell.attributes.underlined;
 					terminal.write(cast(immutable) str[0 .. stride]);
 				} catch(Exception e) {
+					// import std.stdio; File("spam", "wt").writeln(e); throw e;
 				}
 			} else if(cell.nonCharacterData !is null) {
 				// something maybe

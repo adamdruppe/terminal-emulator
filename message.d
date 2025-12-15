@@ -19,10 +19,10 @@ string socketDirectoryName() {
 /*
 	OutputMessages, from the terminal process itself, come in this format:
 	ubyte: message type
-	ubyte: message length
+	ushort: message length
 	bytes[] message
 
-	Messages longer than 255 bytes must be broken up into several messages.
+	Messages longer than 65535 bytes must be broken up into several messages.
 */
 
 enum OutputMessageType : ubyte {
@@ -31,6 +31,7 @@ enum OutputMessageType : ubyte {
 	remoteDetached,
 	mouseTrackingOn,
 	mouseTrackingOff,
+	enableProtocolV2, // indicates that all future messages will have a 16 bit length instead fo 8 bit
 }
 
 align(1)

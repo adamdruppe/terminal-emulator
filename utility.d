@@ -68,6 +68,8 @@ export void changeCurrentCursor(Terminal* t, TerminalEmulator.CursorStyle style)
 	}
 }
 
+// get DISPLAY ?
+
 export void displayImage(Terminal* t, string filename) {
 	import std.base64;
 	ubyte[] data;
